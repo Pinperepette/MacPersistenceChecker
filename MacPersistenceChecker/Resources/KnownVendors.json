@@ -1,0 +1,230 @@
+[
+  {
+    "teamId": "UBF8T346G9",
+    "name": "Microsoft Corporation",
+    "category": "productivity",
+    "verified": true
+  },
+  {
+    "teamId": "JQ525L2MZD",
+    "name": "Adobe Inc.",
+    "category": "creativity",
+    "verified": true
+  },
+  {
+    "teamId": "EQHXZ8M8AV",
+    "name": "Google LLC",
+    "category": "productivity",
+    "verified": true
+  },
+  {
+    "teamId": "9NTXGM424S",
+    "name": "Slack Technologies, LLC",
+    "category": "productivity",
+    "verified": true
+  },
+  {
+    "teamId": "BJ4HAAB9B3",
+    "name": "Zoom Video Communications, Inc.",
+    "category": "productivity",
+    "verified": true
+  },
+  {
+    "teamId": "N9SQDT3S7S",
+    "name": "Spotify AB",
+    "category": "entertainment",
+    "verified": true
+  },
+  {
+    "teamId": "VEKTX9H2N7",
+    "name": "JetBrains s.r.o.",
+    "category": "development",
+    "verified": true
+  },
+  {
+    "teamId": "Z72J2T6N8K",
+    "name": "GitHub, Inc.",
+    "category": "development",
+    "verified": true
+  },
+  {
+    "teamId": "9B5WATR6TV",
+    "name": "Sublime HQ Pty Ltd",
+    "category": "development",
+    "verified": true
+  },
+  {
+    "teamId": "VBG97UB4TA",
+    "name": "1Password",
+    "category": "security",
+    "verified": true
+  },
+  {
+    "teamId": "LMY4V34FPV",
+    "name": "Objective Development Software GmbH",
+    "category": "security",
+    "verified": true
+  },
+  {
+    "teamId": "ML43LWLQ3H",
+    "name": "Objective-See, LLC",
+    "category": "security",
+    "verified": true
+  },
+  {
+    "teamId": "AAPZK3CB24",
+    "name": "Malwarebytes Corporation",
+    "category": "security",
+    "verified": true
+  },
+  {
+    "teamId": "2BUA8C4S2C",
+    "name": "Panic Inc.",
+    "category": "development",
+    "verified": true
+  },
+  {
+    "teamId": "33YRLYRBYV",
+    "name": "Proxyman LLC",
+    "category": "development",
+    "verified": true
+  },
+  {
+    "teamId": "EG7KH642X6",
+    "name": "VMware, Inc.",
+    "category": "virtualization",
+    "verified": true
+  },
+  {
+    "teamId": "4CB3V7YF7S",
+    "name": "Parallels International GmbH",
+    "category": "virtualization",
+    "verified": true
+  },
+  {
+    "teamId": "MXGJJ98X76",
+    "name": "Docker Inc.",
+    "category": "development",
+    "verified": true
+  },
+  {
+    "teamId": "WDNLXAD4W8",
+    "name": "Setapp Limited",
+    "category": "utilities",
+    "verified": true
+  },
+  {
+    "teamId": "6N38VWS5BX",
+    "name": "Alfred App Ltd",
+    "category": "utilities",
+    "verified": true
+  },
+  {
+    "teamId": "J8RPQ294UB",
+    "name": "MacPaw Inc.",
+    "category": "utilities",
+    "verified": true
+  },
+  {
+    "teamId": "H43XF2J3Q6",
+    "name": "Raycast Technologies Inc.",
+    "category": "utilities",
+    "verified": true
+  },
+  {
+    "teamId": "YJGMQURXY7",
+    "name": "Surtees Studios Ltd",
+    "category": "utilities",
+    "verified": true
+  },
+  {
+    "teamId": "G7HH3F8CAK",
+    "name": "Dropbox, Inc.",
+    "category": "cloud_storage",
+    "verified": true
+  },
+  {
+    "teamId": "W5364U7YZB",
+    "name": "Box, Inc.",
+    "category": "cloud_storage",
+    "verified": true
+  },
+  {
+    "teamId": "U68MSDN6DR",
+    "name": "Discord Inc.",
+    "category": "communication",
+    "verified": true
+  },
+  {
+    "teamId": "AU8N7Y8MZ7",
+    "name": "Telegram FZ-LLC",
+    "category": "communication",
+    "verified": true
+  },
+  {
+    "teamId": "T2BZH8JXDM",
+    "name": "WhatsApp Inc.",
+    "category": "communication",
+    "verified": true
+  },
+  {
+    "teamId": "CU3UV4LZ2W",
+    "name": "Cloudflare, Inc.",
+    "category": "networking",
+    "verified": true
+  },
+  {
+    "teamId": "68N9HDSKD4",
+    "name": "Private Internet Access, Inc.",
+    "category": "networking",
+    "verified": true
+  },
+  {
+    "teamId": "2J7NMR4R42",
+    "name": "NordVPN S.A.",
+    "category": "networking",
+    "verified": true
+  },
+  {
+    "teamId": "72Z5XPEPR9",
+    "name": "Logitech Inc.",
+    "category": "hardware",
+    "verified": true
+  },
+  {
+    "teamId": "SY64MV22Y9",
+    "name": "Sonos, Inc.",
+    "category": "hardware",
+    "verified": true
+  },
+  {
+    "teamId": "74J4L3C7KL",
+    "name": "Elgato Systems GmbH",
+    "category": "hardware",
+    "verified": true
+  },
+  {
+    "teamId": "QWY4LRW926",
+    "name": "Oracle America, Inc.",
+    "category": "development",
+    "verified": true
+  },
+  {
+    "teamId": "PQVX4LJ3KK",
+    "name": "Valve Corporation",
+    "category": "entertainment",
+    "verified": true
+  },
+  {
+    "teamId": "KPPBMWJ8TR",
+    "name": "Notion Labs, Inc.",
+    "category": "productivity",
+    "verified": true
+  },
+  {
+    "teamId": "PKX45HG8H8",
+    "name": "Figma, Inc.",
+    "category": "creativity",
+    "verified": true
+  }
+]
