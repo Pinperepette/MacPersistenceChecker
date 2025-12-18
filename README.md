@@ -6,7 +6,7 @@ A native macOS security tool that shows you everything configured to run automat
 
 ## Download
 
-**[Download MacPersistenceChecker v1.3 (DMG)](https://github.com/Pinperepette/MacPersistenceChecker/releases/download/v1.3/MacPersistenceChecker.dmg)**
+**[Download MacPersistenceChecker v1.4 (DMG)](https://github.com/Pinperepette/MacPersistenceChecker/releases/download/v1.4/MacPersistenceChecker.dmg)**
 
 - Requires macOS 13.0 or later
 - Universal binary (Apple Silicon & Intel)
@@ -98,6 +98,36 @@ Every persistence mechanism is mapped to MITRE ATT&CK framework:
 - **Techniques**: T1543.001, T1543.004, T1547.001, T1547.015, and more
 - Direct links to MITRE ATT&CK documentation
 
+### App Invasiveness Report (New in v1.4)
+Comprehensive analysis of installed apps to evaluate their "invasiveness" level:
+
+- **Dual Scoring System**:
+  - **Persistence Score (0-100)** - Evaluates persistence mechanisms:
+    - Trigger types (RunAtLoad, KeepAlive)
+    - Privilege levels (LaunchDaemons, Kernel Extensions, Privileged Helpers)
+    - Resilience (auto-restart, updaters)
+    - Redundancy (multiple items from same vendor)
+    - Trust level (unsigned/suspicious penalties)
+  - **Installation Score (0-100)** - Evaluates "junk" footprint:
+    - File spread across Library folders
+    - Total disk usage
+    - Orphan files (persistence without matching app)
+    - Cache bloat
+    - System-wide installations
+
+- **Grade System** - Apps rated A through F based on combined score
+- **Library Folder Scanning** - Scans Application Support, Caches, Preferences, Containers, Logs
+- **On-Demand Size Calculation** - Fast initial scan, sizes calculated when viewing details
+- **Sortable Results** - Sort by score, size, persistence count, or name
+- **Detailed Breakdown** - View all scoring factors with severity levels
+
+### Menu Bar Integration (New in v1.4)
+Quick access from macOS menu bar:
+
+- **Monitoring Status** - See if real-time monitoring is active
+- **Quick Controls** - Start/Stop monitoring, trigger scan
+- **Badge Count** - Shows unacknowledged changes
+
 ### Interactive Graph Visualization (New in v1.3)
 Visual representation of persistence relationships:
 
@@ -153,7 +183,17 @@ Visual representation of persistence relationships:
 - macOS 13.0+
 - Xcode 15+ or Swift 5.9+
 
-### Build
+### Build (Easy Way)
+
+```bash
+git clone https://github.com/Pinperepette/MacPersistenceChecker.git
+cd MacPersistenceChecker
+./build.sh
+```
+
+This creates a ready-to-use `MacPersistenceChecker.app` in the current directory. Copy it to `/Applications/` to install.
+
+### Build (Manual)
 
 ```bash
 git clone https://github.com/Pinperepette/MacPersistenceChecker.git
@@ -161,7 +201,7 @@ cd MacPersistenceChecker
 swift build -c release
 ```
 
-The executable will be in `.build/release/MacPersistenceChecker`.
+The executable will be in `.build/release/MacPersistenceChecker`. Note: This creates only the binary, not the full .app bundle.
 
 ### Dependencies
 - [GRDB.swift](https://github.com/groue/GRDB.swift) - SQLite database
@@ -188,6 +228,15 @@ MacPersistenceChecker requires **Full Disk Access** to read:
 Without Full Disk Access, some items may not be visible.
 
 ## Changelog
+
+### v1.4
+- **App Invasiveness Report** - New comprehensive analysis tool to evaluate apps by persistence mechanisms and installation footprint
+- **Dual Scoring System** - Separate scores for persistence (triggers, privileges, resilience) and installation quality (junk, orphans, bloat)
+- **Grade System** - Apps rated A through F for quick assessment
+- **Menu Bar Integration** - Quick access to monitoring controls from macOS menu bar
+- **Real-time Monitoring** - FSEvents-based monitoring with intelligent noise suppression
+- **On-Demand Size Calculation** - Faster scans with deferred size computation
+- **Improved UI** - Sortable app lists, detailed score breakdowns, tabbed detail view
 
 ### v1.3
 - **Risk Assessment System** - Automatic risk scoring (0-100) for every item with detailed risk factor breakdown
@@ -217,6 +266,16 @@ Without Full Disk Access, some items may not be visible.
 ## License
 
 MIT License - See [LICENSE](LICENSE) for details.
+
+## About
+
+> **"Lo sapevo che sarei andato in fissa..."**
+>
+> Volevo solo vedere cosa partiva al boot del Mac. Un `launchctl list` e via.
+>
+> Tre settimane dopo mi ritrovo con un sistema di risk scoring da 0 a 100, detection per binari firmati ma malevoli, analisi forense dei timestamp per beccare il timestomping, mapping completo MITRE ATT&CK, grafi interattivi per visualizzare le relazioni tra processi, detection di dylib injection, scansione del database TCC, verifica delle notarization Apple, anomaly detection per file replacement e binary swap, timeline forensi complete con date di creazione, modifica ed esecuzione, 20 scanner diversi per ogni meccanismo di persistence conosciuto su macOS, e una UI che ordina tutto per livello di rischio.
+>
+> La rabbit hole della persistence su macOS non perdona. Send help.
 
 ## Author
 

@@ -105,6 +105,92 @@ final class DatabaseManager {
             }
         }
 
+        // Migration 2: Containment Actions
+        migrator.registerMigration("v2_containment") { db in
+            try db.create(table: "containmentActions") { t in
+                t.autoIncrementedPrimaryKey("id")
+                t.column("itemIdentifier", .text).notNull()
+                t.column("itemCategory", .text).notNull()
+                t.column("actionType", .text).notNull()
+                t.column("timestamp", .double).notNull()
+                t.column("binaryPath", .text)
+                t.column("binaryHash", .text)
+                t.column("plistPath", .text)
+                t.column("plistBackup", .text)
+                t.column("networkRuleId", .text)
+                t.column("networkAnchor", .text)
+                t.column("networkMethod", .text)
+                t.column("status", .text).notNull()
+                t.column("expiresAt", .double)
+                t.column("details", .text)
+            }
+
+            try db.create(index: "idx_containment_identifier", on: "containmentActions", columns: ["itemIdentifier"])
+            try db.create(index: "idx_containment_status", on: "containmentActions", columns: ["status"])
+            try db.create(index: "idx_containment_timestamp", on: "containmentActions", columns: ["timestamp"])
+
+            // Active network rules table (for persistence across app restarts)
+            try db.create(table: "activeNetworkRules") { t in
+                t.column("id", .text).primaryKey()
+                t.column("anchor", .text).notNull()
+                t.column("binaryPath", .text).notNull()
+                t.column("createdAt", .double).notNull()
+                t.column("expiresAt", .double)
+                t.column("method", .text).notNull()
+                t.column("itemIdentifier", .text).notNull()
+            }
+        }
+
+        // Migration 3: Monitor Baseline
+        migrator.registerMigration("v3_monitor_baseline") { db in
+            // Baseline items table - stores current state for comparison
+            try db.create(table: "monitorBaseline") { t in
+                t.autoIncrementedPrimaryKey("id")
+                t.column("identifier", .text).notNull()
+                t.column("category", .text).notNull()
+                t.column("itemJSON", .text).notNull()
+                t.column("capturedAt", .double).notNull()
+            }
+
+            try db.create(index: "idx_baseline_category", on: "monitorBaseline", columns: ["category"])
+            try db.create(index: "idx_baseline_identifier", on: "monitorBaseline", columns: ["identifier"])
+
+            // Change history table - logs all detected changes
+            try db.create(table: "monitorChangeHistory") { t in
+                t.autoIncrementedPrimaryKey("id")
+                t.column("changeId", .text).notNull().unique()
+                t.column("changeType", .text).notNull()
+                t.column("category", .text).notNull()
+                t.column("itemIdentifier", .text)
+                t.column("itemName", .text)
+                t.column("detailsJSON", .text)
+                t.column("relevanceScore", .integer).notNull()
+                t.column("timestamp", .double).notNull()
+                t.column("acknowledged", .boolean).notNull().defaults(to: false)
+            }
+
+            try db.create(index: "idx_changehistory_timestamp", on: "monitorChangeHistory", columns: ["timestamp"])
+            try db.create(index: "idx_changehistory_category", on: "monitorChangeHistory", columns: ["category"])
+            try db.create(index: "idx_changehistory_acknowledged", on: "monitorChangeHistory", columns: ["acknowledged"])
+        }
+
+        // Migration 4: Last scan cache - persist scan results between app launches
+        migrator.registerMigration("v4_last_scan_cache") { db in
+            try db.create(table: "lastScanItems") { t in
+                t.autoIncrementedPrimaryKey("rowId")
+                t.column("identifier", .text).notNull()
+                t.column("itemJSON", .text).notNull()
+            }
+
+            try db.create(index: "idx_lastscan_identifier", on: "lastScanItems", columns: ["identifier"], unique: true)
+
+            // Metadata table for scan info
+            try db.create(table: "lastScanMeta") { t in
+                t.column("key", .text).primaryKey()
+                t.column("value", .text)
+            }
+        }
+
         try migrator.migrate(dbQueue)
     }
 
@@ -416,6 +502,183 @@ final class DatabaseManager {
         }
     }
 
+    // MARK: - Containment Actions
+
+    /// Save a containment action
+    func saveContainmentAction(_ action: ContainmentAction) throws -> ContainmentAction {
+        guard let dbQueue = dbQueue else { throw DatabaseError.notInitialized }
+
+        return try dbQueue.write { db in
+            var mutableAction = action
+            try mutableAction.insert(db)
+            return mutableAction
+        }
+    }
+
+    /// Get the latest active containment for an item
+    func getActiveContainment(for identifier: String) throws -> ContainmentAction? {
+        guard let dbQueue = dbQueue else { throw DatabaseError.notInitialized }
+
+        return try dbQueue.read { db in
+            try ContainmentAction
+                .filter(ContainmentAction.Columns.itemIdentifier == identifier)
+                .filter(ContainmentAction.Columns.status == ContainmentStatus.active.rawValue)
+                .order(ContainmentAction.Columns.timestamp.desc)
+                .fetchOne(db)
+        }
+    }
+
+    /// Get all containment actions for an item
+    func getContainmentHistory(for identifier: String) throws -> [ContainmentAction] {
+        guard let dbQueue = dbQueue else { throw DatabaseError.notInitialized }
+
+        return try dbQueue.read { db in
+            try ContainmentAction
+                .filter(ContainmentAction.Columns.itemIdentifier == identifier)
+                .order(ContainmentAction.Columns.timestamp.desc)
+                .fetchAll(db)
+        }
+    }
+
+    /// Get all active containments
+    func getAllActiveContainments() throws -> [ContainmentAction] {
+        guard let dbQueue = dbQueue else { throw DatabaseError.notInitialized }
+
+        return try dbQueue.read { db in
+            try ContainmentAction
+                .filter(ContainmentAction.Columns.status == ContainmentStatus.active.rawValue)
+                .order(ContainmentAction.Columns.timestamp.desc)
+                .fetchAll(db)
+        }
+    }
+
+    /// Update containment status
+    func updateContainmentStatus(id: Int64, status: ContainmentStatus) throws {
+        guard let dbQueue = dbQueue else { throw DatabaseError.notInitialized }
+
+        try dbQueue.write { db in
+            try db.execute(
+                sql: "UPDATE containmentActions SET status = ? WHERE id = ?",
+                arguments: [status.rawValue, id]
+            )
+        }
+    }
+
+    /// Check if item is contained
+    func isItemContained(identifier: String) throws -> Bool {
+        guard let dbQueue = dbQueue else { throw DatabaseError.notInitialized }
+
+        return try dbQueue.read { db in
+            let count = try ContainmentAction
+                .filter(ContainmentAction.Columns.itemIdentifier == identifier)
+                .filter(ContainmentAction.Columns.status == ContainmentStatus.active.rawValue)
+                .fetchCount(db)
+            return count > 0
+        }
+    }
+
+    // MARK: - Active Network Rules
+
+    /// Save an active network rule
+    func saveNetworkRule(_ rule: NetworkRule, itemIdentifier: String) throws {
+        guard let dbQueue = dbQueue else { throw DatabaseError.notInitialized }
+
+        try dbQueue.write { db in
+            try db.execute(
+                sql: """
+                    INSERT OR REPLACE INTO activeNetworkRules
+                    (id, anchor, binaryPath, createdAt, expiresAt, method, itemIdentifier)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                    """,
+                arguments: [
+                    rule.id,
+                    rule.anchor,
+                    rule.binaryPath,
+                    rule.createdAt.timeIntervalSince1970,
+                    rule.expiresAt?.timeIntervalSince1970,
+                    rule.method.rawValue,
+                    itemIdentifier
+                ]
+            )
+        }
+    }
+
+    /// Get all active network rules
+    func getActiveNetworkRules() throws -> [(rule: NetworkRule, itemIdentifier: String)] {
+        guard let dbQueue = dbQueue else { throw DatabaseError.notInitialized }
+
+        return try dbQueue.read { db in
+            let rows = try Row.fetchAll(db, sql: "SELECT * FROM activeNetworkRules")
+
+            return rows.compactMap { row -> (NetworkRule, String)? in
+                guard let id = row["id"] as? String,
+                      let anchor = row["anchor"] as? String,
+                      let binaryPath = row["binaryPath"] as? String,
+                      let createdAtInterval = row["createdAt"] as? Double,
+                      let methodString = row["method"] as? String,
+                      let method = NetworkBlockMethod(rawValue: methodString),
+                      let itemIdentifier = row["itemIdentifier"] as? String else {
+                    return nil
+                }
+
+                let expiresAt = (row["expiresAt"] as? Double).map { Date(timeIntervalSince1970: $0) }
+
+                let rule = NetworkRule(
+                    id: id,
+                    anchor: anchor,
+                    binaryPath: binaryPath,
+                    createdAt: Date(timeIntervalSince1970: createdAtInterval),
+                    expiresAt: expiresAt,
+                    method: method
+                )
+
+                return (rule, itemIdentifier)
+            }
+        }
+    }
+
+    /// Remove a network rule
+    func removeNetworkRule(id: String) throws {
+        guard let dbQueue = dbQueue else { throw DatabaseError.notInitialized }
+
+        try dbQueue.write { db in
+            try db.execute(sql: "DELETE FROM activeNetworkRules WHERE id = ?", arguments: [id])
+        }
+    }
+
+    /// Get network rule for item
+    func getNetworkRule(for identifier: String) throws -> NetworkRule? {
+        guard let dbQueue = dbQueue else { throw DatabaseError.notInitialized }
+
+        return try dbQueue.read { db in
+            guard let row = try Row.fetchOne(db, sql: """
+                SELECT * FROM activeNetworkRules WHERE itemIdentifier = ?
+                """, arguments: [identifier]) else {
+                return nil
+            }
+
+            guard let id = row["id"] as? String,
+                  let anchor = row["anchor"] as? String,
+                  let binaryPath = row["binaryPath"] as? String,
+                  let createdAtInterval = row["createdAt"] as? Double,
+                  let methodString = row["method"] as? String,
+                  let method = NetworkBlockMethod(rawValue: methodString) else {
+                return nil
+            }
+
+            let expiresAt = (row["expiresAt"] as? Double).map { Date(timeIntervalSince1970: $0) }
+
+            return NetworkRule(
+                id: id,
+                anchor: anchor,
+                binaryPath: binaryPath,
+                createdAt: Date(timeIntervalSince1970: createdAtInterval),
+                expiresAt: expiresAt,
+                method: method
+            )
+        }
+    }
+
     // MARK: - Settings
 
     /// Get a setting value
@@ -439,6 +702,353 @@ final class DatabaseManager {
                     """,
                 arguments: [key, value, Date().timeIntervalSince1970]
             )
+        }
+    }
+
+    // MARK: - Monitor Baseline Operations
+
+    /// Save baseline items for a category
+    func saveBaseline(items: [PersistenceItem], for category: PersistenceCategory) throws {
+        guard let dbQueue = dbQueue else { throw DatabaseError.notInitialized }
+
+        try dbQueue.write { db in
+            // Remove existing baseline for this category
+            try db.execute(
+                sql: "DELETE FROM monitorBaseline WHERE category = ?",
+                arguments: [category.rawValue]
+            )
+
+            // Insert new baseline items
+            let encoder = JSONEncoder()
+            for item in items {
+                let itemData = try encoder.encode(item)
+                let itemJSON = String(data: itemData, encoding: .utf8) ?? "{}"
+
+                try db.execute(
+                    sql: """
+                        INSERT INTO monitorBaseline (identifier, category, itemJSON, capturedAt)
+                        VALUES (?, ?, ?, ?)
+                        """,
+                    arguments: [
+                        item.identifier,
+                        category.rawValue,
+                        itemJSON,
+                        Date().timeIntervalSince1970
+                    ]
+                )
+            }
+        }
+    }
+
+    /// Get baseline items for a category
+    func getBaseline(for category: PersistenceCategory) throws -> [PersistenceItem] {
+        guard let dbQueue = dbQueue else { throw DatabaseError.notInitialized }
+
+        return try dbQueue.read { db in
+            let rows = try Row.fetchAll(
+                db,
+                sql: "SELECT itemJSON FROM monitorBaseline WHERE category = ?",
+                arguments: [category.rawValue]
+            )
+
+            let decoder = JSONDecoder()
+            return rows.compactMap { row -> PersistenceItem? in
+                guard let json = row["itemJSON"] as? String,
+                      let data = json.data(using: .utf8) else {
+                    return nil
+                }
+                return try? decoder.decode(PersistenceItem.self, from: data)
+            }
+        }
+    }
+
+    /// Check if baseline exists
+    func hasBaseline() throws -> Bool {
+        guard let dbQueue = dbQueue else { throw DatabaseError.notInitialized }
+
+        return try dbQueue.read { db in
+            let count = try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM monitorBaseline") ?? 0
+            return count > 0
+        }
+    }
+
+    /// Get baseline capture date
+    func getBaselineDate() throws -> Date? {
+        guard let dbQueue = dbQueue else { throw DatabaseError.notInitialized }
+
+        return try dbQueue.read { db in
+            guard let timestamp = try Double.fetchOne(
+                db,
+                sql: "SELECT MIN(capturedAt) FROM monitorBaseline"
+            ) else {
+                return nil
+            }
+            return Date(timeIntervalSince1970: timestamp)
+        }
+    }
+
+    /// Clear all baseline data
+    func clearBaseline() throws {
+        guard let dbQueue = dbQueue else { throw DatabaseError.notInitialized }
+
+        try dbQueue.write { db in
+            try db.execute(sql: "DELETE FROM monitorBaseline")
+        }
+    }
+
+    // MARK: - Monitor Change History Operations
+
+    /// Save a change to history
+    func saveChangeHistory(_ entry: ChangeHistoryEntry) throws {
+        guard let dbQueue = dbQueue else { throw DatabaseError.notInitialized }
+
+        let encoder = JSONEncoder()
+        let detailsJSON: String?
+        if !entry.details.isEmpty {
+            let data = try encoder.encode(entry.details)
+            detailsJSON = String(data: data, encoding: .utf8)
+        } else {
+            detailsJSON = nil
+        }
+
+        try dbQueue.write { db in
+            try db.execute(
+                sql: """
+                    INSERT INTO monitorChangeHistory
+                    (changeId, changeType, category, itemIdentifier, itemName, detailsJSON, relevanceScore, timestamp, acknowledged)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                arguments: [
+                    entry.id.uuidString,
+                    entry.changeType.rawValue,
+                    entry.category.rawValue,
+                    entry.itemIdentifier,
+                    entry.itemName,
+                    detailsJSON,
+                    entry.relevanceScore,
+                    entry.timestamp.timeIntervalSince1970,
+                    entry.acknowledged
+                ]
+            )
+        }
+    }
+
+    /// Get recent changes (unacknowledged)
+    func getUnacknowledgedChanges(limit: Int = 50) throws -> [ChangeHistoryEntry] {
+        guard let dbQueue = dbQueue else { throw DatabaseError.notInitialized }
+
+        return try dbQueue.read { db in
+            let rows = try Row.fetchAll(
+                db,
+                sql: """
+                    SELECT * FROM monitorChangeHistory
+                    WHERE acknowledged = 0
+                    ORDER BY timestamp DESC
+                    LIMIT ?
+                    """,
+                arguments: [limit]
+            )
+
+            return rows.compactMap { parseChangeHistoryRow($0) }
+        }
+    }
+
+    /// Get all change history
+    func getChangeHistory(limit: Int = 100) throws -> [ChangeHistoryEntry] {
+        guard let dbQueue = dbQueue else { throw DatabaseError.notInitialized }
+
+        return try dbQueue.read { db in
+            let rows = try Row.fetchAll(
+                db,
+                sql: """
+                    SELECT * FROM monitorChangeHistory
+                    ORDER BY timestamp DESC
+                    LIMIT ?
+                    """,
+                arguments: [limit]
+            )
+
+            return rows.compactMap { parseChangeHistoryRow($0) }
+        }
+    }
+
+    /// Acknowledge a change
+    func acknowledgeChange(id: UUID) throws {
+        guard let dbQueue = dbQueue else { throw DatabaseError.notInitialized }
+
+        try dbQueue.write { db in
+            try db.execute(
+                sql: "UPDATE monitorChangeHistory SET acknowledged = 1 WHERE changeId = ?",
+                arguments: [id.uuidString]
+            )
+        }
+    }
+
+    /// Acknowledge all changes
+    func acknowledgeAllChanges() throws {
+        guard let dbQueue = dbQueue else { throw DatabaseError.notInitialized }
+
+        try dbQueue.write { db in
+            try db.execute(sql: "UPDATE monitorChangeHistory SET acknowledged = 1")
+        }
+    }
+
+    /// Get unacknowledged change count
+    func getUnacknowledgedChangeCount() throws -> Int {
+        guard let dbQueue = dbQueue else { throw DatabaseError.notInitialized }
+
+        return try dbQueue.read { db in
+            try Int.fetchOne(
+                db,
+                sql: "SELECT COUNT(*) FROM monitorChangeHistory WHERE acknowledged = 0"
+            ) ?? 0
+        }
+    }
+
+    /// Clear old change history (keep last N days)
+    func pruneChangeHistory(olderThanDays: Int = 30) throws {
+        guard let dbQueue = dbQueue else { throw DatabaseError.notInitialized }
+
+        let cutoffDate = Date().addingTimeInterval(-Double(olderThanDays * 24 * 60 * 60))
+
+        try dbQueue.write { db in
+            try db.execute(
+                sql: "DELETE FROM monitorChangeHistory WHERE timestamp < ?",
+                arguments: [cutoffDate.timeIntervalSince1970]
+            )
+        }
+    }
+
+    private func parseChangeHistoryRow(_ row: Row) -> ChangeHistoryEntry? {
+        guard let changeIdString = row["changeId"] as? String,
+              let changeId = UUID(uuidString: changeIdString),
+              let changeTypeString = row["changeType"] as? String,
+              let changeType = MonitorChangeType(rawValue: changeTypeString),
+              let categoryString = row["category"] as? String,
+              let category = PersistenceCategory(rawValue: categoryString),
+              let relevanceScore = row["relevanceScore"] as? Int64,
+              let timestamp = row["timestamp"] as? Double else {
+            return nil
+        }
+
+        var details: [MonitorChangeDetail] = []
+        if let detailsJSON = row["detailsJSON"] as? String,
+           let data = detailsJSON.data(using: .utf8) {
+            details = (try? JSONDecoder().decode([MonitorChangeDetail].self, from: data)) ?? []
+        }
+
+        return ChangeHistoryEntry(
+            id: changeId,
+            changeType: changeType,
+            category: category,
+            itemIdentifier: row["itemIdentifier"] as? String,
+            itemName: row["itemName"] as? String,
+            details: details,
+            relevanceScore: Int(relevanceScore),
+            timestamp: Date(timeIntervalSince1970: timestamp),
+            acknowledged: row["acknowledged"] as? Bool ?? false
+        )
+    }
+}
+
+// MARK: - Last Scan Cache
+
+extension DatabaseManager {
+    /// Save the last scan results for quick loading on next app launch
+    func saveLastScan(items: [PersistenceItem], scanDate: Date) throws {
+        guard let dbQueue = dbQueue else {
+            NSLog("[DatabaseManager] saveLastScan: Database not initialized!")
+            throw DatabaseError.notInitialized
+        }
+
+        NSLog("[DatabaseManager] saveLastScan: Starting save of %d items...", items.count)
+
+        try dbQueue.write { db in
+            // Clear existing items
+            try db.execute(sql: "DELETE FROM lastScanItems")
+            try db.execute(sql: "DELETE FROM lastScanMeta")
+            NSLog("[DatabaseManager] saveLastScan: Cleared old data")
+
+            // Save each item as JSON
+            let encoder = JSONEncoder()
+            var savedCount = 0
+            for item in items {
+                let jsonData = try encoder.encode(item)
+                let jsonString = String(data: jsonData, encoding: .utf8) ?? ""
+
+                try db.execute(
+                    sql: "INSERT OR REPLACE INTO lastScanItems (identifier, itemJSON) VALUES (?, ?)",
+                    arguments: [item.identifier, jsonString]
+                )
+                savedCount += 1
+            }
+            NSLog("[DatabaseManager] saveLastScan: Saved %d items", savedCount)
+
+            // Save metadata
+            try db.execute(
+                sql: "INSERT INTO lastScanMeta (key, value) VALUES (?, ?)",
+                arguments: ["scanDate", String(scanDate.timeIntervalSince1970)]
+            )
+            try db.execute(
+                sql: "INSERT INTO lastScanMeta (key, value) VALUES (?, ?)",
+                arguments: ["itemCount", String(items.count)]
+            )
+            NSLog("[DatabaseManager] saveLastScan: Saved metadata")
+        }
+
+        NSLog("[DatabaseManager] saveLastScan: SUCCESS - Saved %d items to cache", items.count)
+    }
+
+    /// Load the last scan results
+    func loadLastScan() throws -> (items: [PersistenceItem], scanDate: Date?)? {
+        guard let dbQueue = dbQueue else { throw DatabaseError.notInitialized }
+
+        return try dbQueue.read { db in
+            // Check if we have cached items
+            let count = try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM lastScanItems") ?? 0
+            guard count > 0 else { return nil }
+
+            // Load metadata
+            var scanDate: Date? = nil
+            if let row = try Row.fetchOne(db, sql: "SELECT value FROM lastScanMeta WHERE key = 'scanDate'"),
+               let dateStr = row["value"] as? String,
+               let timestamp = Double(dateStr) {
+                scanDate = Date(timeIntervalSince1970: timestamp)
+            }
+
+            // Load items
+            let decoder = JSONDecoder()
+            var items: [PersistenceItem] = []
+
+            let rows = try Row.fetchAll(db, sql: "SELECT itemJSON FROM lastScanItems")
+            for row in rows {
+                if let jsonString = row["itemJSON"] as? String,
+                   let jsonData = jsonString.data(using: .utf8),
+                   let item = try? decoder.decode(PersistenceItem.self, from: jsonData) {
+                    items.append(item)
+                }
+            }
+
+            print("[DatabaseManager] Loaded \(items.count) items from last scan cache")
+            return (items, scanDate)
+        }
+    }
+
+    /// Check if we have a cached scan
+    func hasLastScan() -> Bool {
+        guard let dbQueue = dbQueue else { return false }
+        return (try? dbQueue.read { db in
+            let count = try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM lastScanItems") ?? 0
+            return count > 0
+        }) ?? false
+    }
+
+    /// Clear the last scan cache
+    func clearLastScan() throws {
+        guard let dbQueue = dbQueue else { throw DatabaseError.notInitialized }
+        try dbQueue.write { db in
+            try db.execute(sql: "DELETE FROM lastScanItems")
+            try db.execute(sql: "DELETE FROM lastScanMeta")
         }
     }
 }

@@ -1,0 +1,22 @@
+# Build
+.build/
+DerivedData/
+*.xcodeproj/xcuserdata/
+*.xcworkspace/xcuserdata/
+
+# macOS
+.DS_Store
+*.swp
+*~
+
+# Temporary files
+GenerateIcon.swift
+icona.png
+*.iconset/
+
+# App bundle (built separately)
+*.app/
+
+# Package manager
+.swiftpm/
+Packages/

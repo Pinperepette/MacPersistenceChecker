@@ -2,6 +2,19 @@ import Foundation
 import SwiftUI
 import Combine
 
+// Debug helper
+extension String {
+    func appendToFile(_ path: String) throws {
+        if let handle = FileHandle(forWritingAtPath: path) {
+            handle.seekToEndOfFile()
+            handle.write(self.data(using: .utf8)!)
+            handle.closeFile()
+        } else {
+            try self.write(toFile: path, atomically: true, encoding: .utf8)
+        }
+    }
+}
+
 /// Global application state
 @MainActor
 final class AppState: ObservableObject {
@@ -65,6 +78,23 @@ final class AppState: ObservableObject {
     /// Item to show in focused graph view (nil = show full graph)
     @Published var focusedGraphItem: PersistenceItem? = nil
 
+    // MARK: - Graph Detail Window
+
+    /// Node to show in detail window
+    @Published var graphDetailNode: GraphNode? = nil
+
+    /// Edge to show in detail window
+    @Published var graphDetailEdge: GraphEdge? = nil
+
+    /// Source node for edge detail
+    @Published var graphDetailSourceNode: GraphNode? = nil
+
+    /// Target node for edge detail
+    @Published var graphDetailTargetNode: GraphNode? = nil
+
+    /// Persistence item for detailed view (linked from node)
+    @Published var graphDetailPersistenceItem: PersistenceItem? = nil
+
     // MARK: - Snapshots
 
     /// Available snapshots
@@ -73,14 +103,59 @@ final class AppState: ObservableObject {
     /// Current snapshot being viewed
     @Published var currentSnapshot: Snapshot? = nil
 
+    // MARK: - Monitoring State
+
+    /// Whether real-time monitoring is active
+    @Published var isMonitoring: Bool = false
+
+    /// Last detected change from monitor
+    @Published var lastMonitorChange: MonitorChange? = nil
+
+    /// Count of unacknowledged changes
+    @Published var unacknowledgedChangeCount: Int = 0
+
     // MARK: - Private
 
     private let scanner = ScannerOrchestrator()
     private var cancellables = Set<AnyCancellable>()
 
     private init() {
+        // Ensure database is initialized before we try to load from it
+        ensureDatabaseInitialized()
         setupBindings()
         loadSnapshots()
+        loadCachedScan()
+        // Note: Containment and Monitor are initialized lazily to avoid permission prompts on launch
+    }
+
+    /// Ensure database is initialized (idempotent)
+    private func ensureDatabaseInitialized() {
+        if DatabaseManager.shared.dbQueue == nil {
+            do {
+                try DatabaseManager.shared.initialize()
+                NSLog("[AppState] Database initialized")
+            } catch {
+                NSLog("[AppState] Failed to initialize database: %@", error.localizedDescription)
+            }
+        } else {
+            NSLog("[AppState] Database already initialized")
+        }
+    }
+
+    /// Load cached scan results from database
+    private func loadCachedScan() {
+        NSLog("[AppState] Loading cached scan...")
+        do {
+            if let cached = try DatabaseManager.shared.loadLastScan() {
+                items = cached.items
+                lastScanDate = cached.scanDate
+                NSLog("[AppState] Loaded %d items from cache", cached.items.count)
+            } else {
+                NSLog("[AppState] No cached scan found")
+            }
+        } catch {
+            NSLog("[AppState] Failed to load cached scan: %@", error.localizedDescription)
+        }
     }
 
     private func setupBindings() {
@@ -187,11 +262,28 @@ final class AppState: ObservableObject {
 
     /// Scan all categories
     func scanAll() async {
+        let debugFile = "/tmp/mpc_scan_debug.log"
+        try? "Scan started at \(Date())\n".write(toFile: debugFile, atomically: true, encoding: .utf8)
+
+        // Clear previous results to show we're starting fresh
+        items = []
+        selectedItem = nil
+
         let startTime = CFAbsoluteTimeGetCurrent()
         items = await scanner.scanAll()
         let elapsed = CFAbsoluteTimeGetCurrent() - startTime
-        print("⚡️ Scan completed in \(String(format: "%.2f", elapsed)) seconds - Found \(items.count) items")
         lastScanDate = Date()
+
+        try? "Scan completed: \(items.count) items in \(elapsed)s\n".appendToFile(debugFile)
+
+        // Save to cache for next app launch
+        do {
+            try? "Saving to cache...\n".appendToFile(debugFile)
+            try DatabaseManager.shared.saveLastScan(items: items, scanDate: lastScanDate!)
+            try? "Cache saved OK!\n".appendToFile(debugFile)
+        } catch {
+            try? "Cache save FAILED: \(error)\n".appendToFile(debugFile)
+        }
 
         // Create automatic snapshot if first scan
         if snapshots.isEmpty {
@@ -258,6 +350,71 @@ final class AppState: ObservableObject {
     /// Get total item count
     var totalCount: Int {
         items.count
+    }
+
+    // MARK: - Monitoring Methods
+
+    /// Whether monitor bindings have been setup
+    private var monitorBindingsSetup = false
+
+    /// Setup bindings to PersistenceMonitor (lazy - called on first monitoring access)
+    private func ensureMonitorBindings() {
+        guard !monitorBindingsSetup else { return }
+        monitorBindingsSetup = true
+
+        let monitor = PersistenceMonitor.shared
+
+        // Sync monitoring state
+        monitor.$state
+            .map { $0 == .running }
+            .receive(on: RunLoop.main)
+            .assign(to: &$isMonitoring)
+
+        // Sync last change
+        monitor.$lastChange
+            .receive(on: RunLoop.main)
+            .assign(to: &$lastMonitorChange)
+
+        // Sync unacknowledged count
+        monitor.$unacknowledgedCount
+            .receive(on: RunLoop.main)
+            .assign(to: &$unacknowledgedChangeCount)
+    }
+
+    /// Toggle real-time monitoring
+    func toggleMonitoring() async {
+        ensureMonitorBindings()
+        await PersistenceMonitor.shared.toggleMonitoring()
+    }
+
+    /// Start monitoring
+    func startMonitoring() async {
+        ensureMonitorBindings()
+        await PersistenceMonitor.shared.startMonitoring()
+    }
+
+    /// Stop monitoring
+    func stopMonitoring() {
+        ensureMonitorBindings()
+        PersistenceMonitor.shared.stopMonitoring()
+    }
+
+    /// Update monitoring baseline with current items
+    func updateMonitorBaseline() async throws {
+        ensureMonitorBindings()
+        try await PersistenceMonitor.shared.updateBaseline()
+    }
+
+    /// Acknowledge all pending changes
+    func acknowledgeAllChanges() {
+        ensureMonitorBindings()
+        PersistenceMonitor.shared.acknowledgeAllChanges()
+    }
+
+    /// Get change history
+    func getChangeHistory(limit: Int = 100) -> [ChangeHistoryEntry] {
+        ensureMonitorBindings()
+        return PersistenceMonitor.shared.getChangeHistory(limit: limit)
     }
 }
 

@@ -60,10 +60,26 @@ struct ContentView: View {
                 }
                 .disabled(appState.items.isEmpty)
             }
+
+            ToolbarItem(placement: .primaryAction) {
+                Button {
+                    openWindow(id: "invasiveness-window")
+                } label: {
+                    Label("App Report", systemImage: "chart.bar.fill")
+                }
+                .disabled(appState.items.isEmpty)
+                .help("Analyze apps for invasiveness")
+            }
         }
         .sheet(isPresented: $appState.showSnapshotsSheet) {
             SnapshotListView()
                 .environmentObject(appState)
+        }
+        .task {
+            // Auto-scan on launch if enabled AND no cached data
+            if UserDefaults.standard.bool(forKey: "autoScanOnLaunch") && appState.items.isEmpty {
+                await appState.scanAll()
+            }
         }
     }
 }

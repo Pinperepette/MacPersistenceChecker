@@ -161,6 +161,7 @@ class PersistenceGraph: ObservableObject {
     @Published var nodes: [GraphNode] = []
     @Published var edges: [GraphEdge] = []
     @Published var selectedNode: GraphNode? = nil
+    @Published var selectedEdge: GraphEdge? = nil
     @Published var isAnalyzing: Bool = false
     @Published var analysisProgress: Double = 0
 

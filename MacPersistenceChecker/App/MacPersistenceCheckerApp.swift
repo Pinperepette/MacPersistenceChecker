@@ -2,16 +2,26 @@ import SwiftUI
 
 @main
 struct MacPersistenceCheckerApp: App {
-    @StateObject private var appState = AppState.shared
-    @StateObject private var fdaChecker = FullDiskAccessChecker.shared
-
-    init() {
-        // Initialize database
+    // IMPORTANT: Database must be initialized before AppState.shared is accessed
+    // This static initializer runs before @StateObject property initializers
+    private static let _initializeDatabase: Void = {
         do {
             try DatabaseManager.shared.initialize()
+            print("[App] Database initialized successfully")
         } catch {
-            print("Failed to initialize database: \(error)")
+            print("[App] Failed to initialize database: \(error)")
         }
+    }()
+
+    @StateObject private var appState = AppState.shared
+    @StateObject private var fdaChecker = FullDiskAccessChecker.shared
+    @StateObject private var monitor = PersistenceMonitor.shared
+
+    init() {
+        // Ensure database initialization runs (static property is lazy)
+        _ = Self._initializeDatabase
+        // Note: Monitor is NOT auto-started here
+        // User must explicitly enable monitoring in Settings → Monitoring
     }
 
     var body: some Scene {
@@ -41,10 +51,41 @@ struct MacPersistenceCheckerApp: App {
         .windowStyle(.automatic)
         .defaultSize(width: 1000, height: 700)
 
+        // Graph Detail Window (opens on double-click)
+        Window("Graph Detail", id: "graph-detail-window") {
+            GraphDetailWindowView()
+                .environmentObject(appState)
+        }
+        .windowStyle(.automatic)
+        .defaultSize(width: 900, height: 650)
+
+        // App Invasiveness Report Window
+        Window("App Invasiveness Report", id: "invasiveness-window") {
+            AppInvasivenessView()
+                .environmentObject(appState)
+        }
+        .windowStyle(.automatic)
+        .defaultSize(width: 1000, height: 700)
+
         Settings {
             SettingsView()
                 .environmentObject(appState)
         }
+
+        // Menu Bar Extra for quick monitoring control
+        MenuBarExtra {
+            MenuBarView(monitor: monitor, appState: appState)
+        } label: {
+            HStack(spacing: 4) {
+                Image(systemName: monitor.isMonitoring ? "shield.checkered" : "shield")
+                    .symbolRenderingMode(.hierarchical)
+                if monitor.unacknowledgedCount > 0 {
+                    Text("\(monitor.unacknowledgedCount)")
+                        .font(.caption2)
+                }
+            }
+        }
+        .menuBarExtraStyle(.window)
     }
 }
 
@@ -82,12 +123,17 @@ struct SettingsView: View {
                     Label("Extended Scanners", systemImage: "plus.circle")
                 }
 
+            MonitoringSettingsView()
+                .tabItem {
+                    Label("Monitoring", systemImage: "eye")
+                }
+
             AboutView()
                 .tabItem {
                     Label("About", systemImage: "info.circle")
                 }
         }
-        .frame(width: 550, height: 500)
+        .frame(width: 550, height: 600)
     }
 }
 
@@ -268,7 +314,7 @@ struct AboutView: View {
                 .font(.title)
                 .fontWeight(.bold)
 
-            Text("Version 1.3.0")
+            Text("Version 1.4.0")
                 .foregroundColor(.secondary)
 
             Text("A comprehensive tool for monitoring macOS persistence mechanisms.")

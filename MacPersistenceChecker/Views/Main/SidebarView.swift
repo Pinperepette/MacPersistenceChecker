@@ -151,6 +151,74 @@ struct SidebarView: View {
                     color: .red
                 )
             }
+
+            // Scan section - prominent
+            Section {
+                VStack(spacing: 12) {
+                    // Progress or date display
+                    if appState.isScanning {
+                        VStack(spacing: 8) {
+                            ProgressView(value: appState.scanProgress)
+                                .progressViewStyle(.linear)
+
+                            if let category = appState.currentScanCategory {
+                                Text("Scanning \(category.displayName)...")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                            } else {
+                                Text("Preparing scan...")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                            }
+                        }
+                        .padding(.vertical, 4)
+                    } else if let scanDate = appState.lastScanDate {
+                        HStack {
+                            Image(systemName: "checkmark.circle.fill")
+                                .foregroundColor(.green)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("Last scan")
+                                    .font(.caption2)
+                                    .foregroundColor(.secondary)
+                                Text(scanDate, format: .dateTime.day().month().hour().minute())
+                                    .font(.caption)
+                                    .fontWeight(.medium)
+                            }
+                            Spacer()
+                        }
+                    } else {
+                        HStack {
+                            Image(systemName: "exclamationmark.circle")
+                                .foregroundColor(.orange)
+                            Text("No scan yet")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                            Spacer()
+                        }
+                    }
+
+                    // Scan button
+                    Button {
+                        Task {
+                            await appState.scanAll()
+                        }
+                    } label: {
+                        HStack {
+                            Image(systemName: appState.isScanning ? "stop.fill" : "arrow.clockwise")
+                            Text(appState.isScanning ? "Scanning..." : "Scan Now")
+                                .fontWeight(.medium)
+                        }
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 8)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(appState.isScanning ? .gray : .accentColor)
+                    .disabled(appState.isScanning)
+                }
+                .padding(.vertical, 4)
+            } header: {
+                Label("Scan", systemImage: "magnifyingglass")
+            }
         }
         .listStyle(.sidebar)
         .navigationTitle("Persistence")

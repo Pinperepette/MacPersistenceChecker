@@ -112,10 +112,16 @@ struct GraphView: View {
                         NodeDetailPanel(node: selectedNode, graph: graph)
                             .transition(.move(edge: .bottom).combined(with: .opacity))
                     }
+
+                    // Selected edge details
+                    if let selectedEdge = graph.selectedEdge {
+                        EdgeDetailPanel(edge: selectedEdge, graph: graph)
+                            .transition(.move(edge: .bottom).combined(with: .opacity))
+                    }
                 }
 
-                // Legend
-                if !graph.nodes.isEmpty {
+                // Legend (hide when detail panel is open)
+                if !graph.nodes.isEmpty && graph.selectedNode == nil && graph.selectedEdge == nil {
                     VStack {
                         Spacer()
                         HStack {
@@ -602,6 +608,8 @@ struct GraphView: View {
 
 struct GraphCanvas: View {
     @ObservedObject var graph: PersistenceGraph
+    @EnvironmentObject var appState: AppState
+    @Environment(\.openWindow) private var openWindow
     let scale: CGFloat
     let offset: CGSize
 
@@ -663,10 +671,11 @@ struct GraphCanvas: View {
         }
         .contentShape(Rectangle())
         .onTapGesture { location in
-            // Find tapped node
+            // Find tapped node (single click selects)
             let transform = CGAffineTransform(translationX: offset.width, y: offset.height)
                 .scaledBy(x: scale, y: scale)
 
+            // Check nodes first
             for node in graph.nodes {
                 let pos = node.position.applying(transform)
                 let distance = sqrt(pow(location.x - pos.x, 2) + pow(location.y - pos.y, 2))
@@ -676,11 +685,126 @@ struct GraphCanvas: View {
                     } else {
                         graph.selectedNode = node
                     }
+                    graph.selectedEdge = nil
                     return
                 }
             }
+
+            // Check edges
+            for edge in graph.edges {
+                guard let sourceNode = graph.node(byId: edge.sourceId),
+                      let targetNode = graph.node(byId: edge.targetId) else {
+                    continue
+                }
+
+                let sourcePoint = sourceNode.position.applying(transform)
+                let targetPoint = targetNode.position.applying(transform)
+
+                // Calculate distance from point to line segment
+                let edgeDistance = distanceToLineSegment(point: location, lineStart: sourcePoint, lineEnd: targetPoint)
+                if edgeDistance < 15 * scale {
+                    if graph.selectedEdge?.id == edge.id {
+                        graph.selectedEdge = nil
+                    } else {
+                        graph.selectedEdge = edge
+                    }
+                    graph.selectedNode = nil
+                    return
+                }
+            }
+
             graph.selectedNode = nil
+            graph.selectedEdge = nil
         }
+        .onTapGesture(count: 2) { location in
+            // Double-click opens detail window
+            let transform = CGAffineTransform(translationX: offset.width, y: offset.height)
+                .scaledBy(x: scale, y: scale)
+
+            // Check nodes first
+            for node in graph.nodes {
+                let pos = node.position.applying(transform)
+                let distance = sqrt(pow(location.x - pos.x, 2) + pow(location.y - pos.y, 2))
+                if distance < 30 * scale {
+                    openNodeDetailWindow(node: node)
+                    return
+                }
+            }
+
+            // Check edges
+            for edge in graph.edges {
+                guard let sourceNode = graph.node(byId: edge.sourceId),
+                      let targetNode = graph.node(byId: edge.targetId) else {
+                    continue
+                }
+
+                let sourcePoint = sourceNode.position.applying(transform)
+                let targetPoint = targetNode.position.applying(transform)
+
+                let edgeDistance = distanceToLineSegment(point: location, lineStart: sourcePoint, lineEnd: targetPoint)
+                if edgeDistance < 15 * scale {
+                    openEdgeDetailWindow(edge: edge, sourceNode: sourceNode, targetNode: targetNode)
+                    return
+                }
+            }
+        }
+    }
+
+    // MARK: - Open Detail Windows
+
+    private func openNodeDetailWindow(node: GraphNode) {
+        appState.graphDetailNode = node
+        appState.graphDetailEdge = nil
+        appState.graphDetailSourceNode = nil
+        appState.graphDetailTargetNode = nil
+
+        // Find linked persistence item if available
+        if let itemId = node.persistenceItemId {
+            appState.graphDetailPersistenceItem = appState.items.first { $0.id == itemId }
+        } else {
+            appState.graphDetailPersistenceItem = nil
+        }
+
+        openWindow(id: "graph-detail-window")
+    }
+
+    private func openEdgeDetailWindow(edge: GraphEdge, sourceNode: GraphNode, targetNode: GraphNode) {
+        appState.graphDetailEdge = edge
+        appState.graphDetailNode = nil
+        appState.graphDetailSourceNode = sourceNode
+        appState.graphDetailTargetNode = targetNode
+
+        // Find linked persistence item from source node
+        if let itemId = sourceNode.persistenceItemId {
+            appState.graphDetailPersistenceItem = appState.items.first { $0.id == itemId }
+        } else {
+            appState.graphDetailPersistenceItem = nil
+        }
+
+        openWindow(id: "graph-detail-window")
+    }
+
+    // MARK: - Distance Calculation
+
+    private func distanceToLineSegment(point: CGPoint, lineStart: CGPoint, lineEnd: CGPoint) -> CGFloat {
+        let dx = lineEnd.x - lineStart.x
+        let dy = lineEnd.y - lineStart.y
+        let lengthSquared = dx * dx + dy * dy
+
+        if lengthSquared == 0 {
+            // Line is a point
+            return sqrt(pow(point.x - lineStart.x, 2) + pow(point.y - lineStart.y, 2))
+        }
+
+        // Parameter t for closest point on line
+        var t = ((point.x - lineStart.x) * dx + (point.y - lineStart.y) * dy) / lengthSquared
+        t = max(0, min(1, t))
+
+        // Closest point on segment
+        let closestX = lineStart.x + t * dx
+        let closestY = lineStart.y + t * dy
+
+        return sqrt(pow(point.x - closestX, 2) + pow(point.y - closestY, 2))
     }
 
     private func riskColor(for score: Int) -> Color {
@@ -922,9 +1046,11 @@ struct GraphControlsPanel: View {
 struct NodeDetailPanel: View {
     let node: GraphNode
     @ObservedObject var graph: PersistenceGraph
+    @EnvironmentObject var appState: AppState
 
-    private var connectedNodes: [GraphNode] {
-        graph.connectedNodes(to: node.id)
+    private var persistenceItem: PersistenceItem? {
+        guard let itemId = node.persistenceItemId else { return nil }
+        return appState.items.first { $0.id == itemId }
     }
 
     private var outgoingEdges: [GraphEdge] {
@@ -935,14 +1061,21 @@ struct NodeDetailPanel: View {
         graph.edges(to: node.id)
     }
 
+    private let dateFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.dateStyle = .medium
+        f.timeStyle = .short
+        return f
+    }()
+
     var body: some View {
-        HStack(spacing: 16) {
-            // Node info
-            HStack(spacing: 12) {
+        VStack(spacing: 0) {
+            // Header with close button
+            HStack {
                 Image(systemName: node.type.icon)
                     .font(.title2)
                     .foregroundColor(node.type.color)
-                    .frame(width: 40, height: 40)
+                    .frame(width: 36, height: 36)
                     .background(node.type.color.opacity(0.2))
                     .cornerRadius(8)
 
@@ -952,44 +1085,426 @@ struct NodeDetailPanel: View {
                     Text(node.type.rawValue)
                         .font(.caption)
                         .foregroundColor(.secondary)
-                    if let path = node.path {
-                        Text(path)
-                            .font(.caption2)
-                            .foregroundColor(.secondary)
-                            .lineLimit(1)
-                            .truncationMode(.middle)
-                    }
                 }
+
+                Spacer()
+
+                if let risk = node.riskScore, risk > 0 {
+                    HStack(spacing: 4) {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                        Text("Risk: \(risk)")
+                    }
+                    .font(.caption)
+                    .fontWeight(.bold)
+                    .foregroundColor(.white)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(riskColor(for: risk))
+                    .cornerRadius(6)
+                }
+
+                Button(action: { graph.selectedNode = nil }) {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.title3)
+                        .foregroundColor(.secondary)
+                }
+                .buttonStyle(.plain)
             }
+            .padding(.horizontal)
+            .padding(.top, 12)
+            .padding(.bottom, 8)
 
             Divider()
 
-            // Connections summary
-            VStack(alignment: .leading, spacing: 4) {
-                Text("Connections")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
+            // Scrollable content with all details
+            ScrollView {
+                VStack(alignment: .leading, spacing: 16) {
+                    // Node Info
+                    DetailSectionInline(title: "Node Info", icon: "info.circle") {
+                        DetailRowInline(label: "ID", value: node.id)
+                        if let path = node.path {
+                            DetailRowInline(label: "Path", value: path, copyable: true)
+                        }
+                        if let details = node.details {
+                            DetailRowInline(label: "Details", value: details)
+                        }
+                        DetailRowInline(label: "Connections", value: "\(outgoingEdges.count) out, \(incomingEdges.count) in")
+                    }
 
-                HStack(spacing: 12) {
-                    Label("\(outgoingEdges.count) outgoing", systemImage: "arrow.right.circle")
-                    Label("\(incomingEdges.count) incoming", systemImage: "arrow.left.circle")
+                    // Persistence Item details (if linked)
+                    if let item = persistenceItem {
+                        DetailSectionInline(title: "Persistence Item", icon: "doc.text.fill") {
+                            DetailRowInline(label: "Name", value: item.name)
+                            DetailRowInline(label: "Identifier", value: item.identifier)
+                            DetailRowInline(label: "Category", value: item.category.displayName)
+                            DetailRowInline(label: "Trust", value: item.trustLevel.displayName, color: item.trustLevel.color)
+                            DetailRowInline(label: "Enabled", value: item.isEnabled ? "Yes" : "No", color: item.isEnabled ? .green : .secondary)
+                            DetailRowInline(label: "Loaded", value: item.isLoaded ? "Yes" : "No", color: item.isLoaded ? .green : .secondary)
+                            if let version = item.version {
+                                DetailRowInline(label: "Version", value: version)
+                            }
+                        }
+
+                        // Paths
+                        DetailSectionInline(title: "File Paths", icon: "folder") {
+                            if let plist = item.plistPath {
+                                DetailRowInline(label: "Plist", value: plist.path, copyable: true)
+                            }
+                            if let exec = item.executablePath {
+                                DetailRowInline(label: "Executable", value: exec.path, copyable: true)
+                            }
+                            if let parent = item.parentAppPath {
+                                DetailRowInline(label: "Parent App", value: parent.path, copyable: true)
+                            }
+                            if let workDir = item.workingDirectory {
+                                DetailRowInline(label: "Working Dir", value: workDir)
+                            }
+                        }
+
+                        // Signature
+                        if let sig = item.signatureInfo {
+                            DetailSectionInline(title: "Code Signature", icon: "checkmark.seal") {
+                                DetailRowInline(label: "Signed", value: sig.isSigned ? "Yes" : "No", color: sig.isSigned ? .green : .red)
+                                if let org = sig.organizationName {
+                                    DetailRowInline(label: "Organization", value: org)
+                                }
+                                if let team = sig.teamIdentifier {
+                                    DetailRowInline(label: "Team ID", value: team)
+                                }
+                                DetailRowInline(label: "Apple Signed", value: sig.isAppleSigned ? "Yes" : "No", color: sig.isAppleSigned ? .green : .secondary)
+                                DetailRowInline(label: "Notarized", value: sig.isNotarized ? "Yes" : "No", color: sig.isNotarized ? .green : .secondary)
+                            }
+                        }
+
+                        // Plist Config
+                        if item.runAtLoad != nil || item.keepAlive != nil || item.programArguments != nil {
+                            DetailSectionInline(title: "Plist Config", icon: "gearshape") {
+                                if let runAtLoad = item.runAtLoad {
+                                    DetailRowInline(label: "Run At Load", value: runAtLoad ? "Yes" : "No", color: runAtLoad ? .orange : .secondary)
+                                }
+                                if let keepAlive = item.keepAlive {
+                                    DetailRowInline(label: "Keep Alive", value: keepAlive ? "Yes" : "No", color: keepAlive ? .orange : .secondary)
+                                }
+                                if let args = item.programArguments, !args.isEmpty {
+                                    DetailRowInline(label: "Arguments", value: args.joined(separator: " "))
+                                }
+                            }
+                        }
+
+                        // Timestamps
+                        DetailSectionInline(title: "Timestamps", icon: "clock") {
+                            if let created = item.plistCreatedAt {
+                                DetailRowInline(label: "Plist Created", value: dateFormatter.string(from: created))
+                            }
+                            if let modified = item.plistModifiedAt {
+                                DetailRowInline(label: "Plist Modified", value: dateFormatter.string(from: modified))
+                            }
+                            if let binCreated = item.binaryCreatedAt {
+                                DetailRowInline(label: "Binary Created", value: dateFormatter.string(from: binCreated))
+                            }
+                            if let binExec = item.binaryLastExecutedAt {
+                                DetailRowInline(label: "Last Executed", value: dateFormatter.string(from: binExec))
+                            }
+                            DetailRowInline(label: "Discovered", value: dateFormatter.string(from: item.discoveredAt))
+                        }
+
+                        // Risk Assessment
+                        if let riskScore = item.riskScore {
+                            DetailSectionInline(title: "Risk Assessment", icon: "exclamationmark.triangle") {
+                                HStack {
+                                    Text("Score")
+                                        .font(.caption)
+                                        .foregroundColor(.secondary)
+                                        .frame(width: 80, alignment: .trailing)
+
+                                    GeometryReader { geo in
+                                        ZStack(alignment: .leading) {
+                                            RoundedRectangle(cornerRadius: 3)
+                                                .fill(Color.secondary.opacity(0.2))
+                                            RoundedRectangle(cornerRadius: 3)
+                                                .fill(riskColor(for: riskScore))
+                                                .frame(width: geo.size.width * CGFloat(riskScore) / 100)
+                                        }
+                                    }
+                                    .frame(height: 8)
+                                    .frame(maxWidth: 150)
+
+                                    Text("\(riskScore)/100")
+                                        .font(.caption)
+                                        .fontWeight(.bold)
+                                        .foregroundColor(riskColor(for: riskScore))
+                                }
+
+                                if let details = item.riskDetails, !details.isEmpty {
+                                    ForEach(details.prefix(5), id: \.factor) { detail in
+                                        HStack {
+                                            Circle()
+                                                .fill(riskDetailColor(for: detail.points))
+                                                .frame(width: 6, height: 6)
+                                            Text(detail.factor)
+                                                .font(.caption)
+                                            Spacer()
+                                            Text("+\(detail.points)")
+                                                .font(.caption)
+                                                .fontWeight(.bold)
+                                                .foregroundColor(riskDetailColor(for: detail.points))
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        // Signed-but-Dangerous
+                        if let flags = item.signedButDangerousFlags, !flags.isEmpty {
+                            DetailSectionInline(title: "Signed-but-Dangerous", icon: "exclamationmark.shield") {
+                                ForEach(flags.prefix(3)) { flag in
+                                    HStack(alignment: .top) {
+                                        Image(systemName: "exclamationmark.triangle.fill")
+                                            .font(.caption2)
+                                            .foregroundColor(.orange)
+                                        VStack(alignment: .leading, spacing: 1) {
+                                            Text(flag.title)
+                                                .font(.caption)
+                                                .fontWeight(.medium)
+                                            Text(flag.description)
+                                                .font(.caption2)
+                                                .foregroundColor(.secondary)
+                                                .lineLimit(2)
+                                        }
+                                        Spacer()
+                                        Text("+\(flag.points)")
+                                            .font(.caption2)
+                                            .fontWeight(.bold)
+                                            .foregroundColor(.orange)
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
-                .font(.caption)
+                .padding()
             }
-
-            Spacer()
-
-            // Close button
-            Button(action: { graph.selectedNode = nil }) {
-                Image(systemName: "xmark.circle.fill")
-                    .foregroundColor(.secondary)
-            }
-            .buttonStyle(.plain)
+            .frame(maxHeight: 350)
         }
-        .padding()
         .background(.ultraThinMaterial)
         .cornerRadius(12)
         .padding()
+    }
+
+    private func riskColor(for score: Int) -> Color {
+        switch score {
+        case 0..<25: return .green
+        case 25..<50: return .yellow
+        case 50..<75: return .orange
+        default: return .red
+        }
+    }
+
+    private func riskDetailColor(for points: Int) -> Color {
+        switch points {
+        case 0..<10: return .yellow
+        case 10..<20: return .orange
+        default: return .red
+        }
+    }
+}
+
+// MARK: - Inline Detail Components
+
+struct DetailSectionInline<Content: View>: View {
+    let title: String
+    let icon: String
+    @ViewBuilder let content: Content
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 6) {
+                Image(systemName: icon)
+                    .font(.caption)
+                    .foregroundColor(.accentColor)
+                Text(title)
+                    .font(.caption)
+                    .fontWeight(.semibold)
+            }
+
+            VStack(alignment: .leading, spacing: 4) {
+                content
+            }
+            .padding(8)
+            .background(Color(nsColor: .controlBackgroundColor).opacity(0.5))
+            .cornerRadius(6)
+        }
+    }
+}
+
+struct DetailRowInline: View {
+    let label: String
+    let value: String
+    var copyable: Bool = false
+    var color: Color? = nil
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 8) {
+            Text(label)
+                .font(.caption)
+                .foregroundColor(.secondary)
+                .frame(width: 80, alignment: .trailing)
+
+            Text(value)
+                .font(.caption)
+                .foregroundColor(color)
+                .lineLimit(2)
+                .textSelection(.enabled)
+
+            Spacer()
+
+            if copyable {
+                Button {
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(value, forType: .string)
+                } label: {
+                    Image(systemName: "doc.on.doc")
+                        .font(.caption2)
+                }
+                .buttonStyle(.plain)
+                .foregroundColor(.secondary)
+            }
+        }
+    }
+}
+
+struct EdgeDetailPanel: View {
+    let edge: GraphEdge
+    @ObservedObject var graph: PersistenceGraph
+    @EnvironmentObject var appState: AppState
+
+    private var sourceNode: GraphNode? {
+        graph.node(byId: edge.sourceId)
+    }
+
+    private var targetNode: GraphNode? {
+        graph.node(byId: edge.targetId)
+    }
+
+    private var sourcePersistenceItem: PersistenceItem? {
+        guard let itemId = sourceNode?.persistenceItemId else { return nil }
+        return appState.items.first { $0.id == itemId }
+    }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            // Header
+            HStack {
+                Image(systemName: "arrow.right.circle.fill")
+                    .font(.title2)
+                    .foregroundColor(edge.relationship.color)
+                    .frame(width: 36, height: 36)
+                    .background(edge.relationship.color.opacity(0.2))
+                    .cornerRadius(8)
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(edge.relationship.rawValue.capitalized)
+                        .font(.headline)
+                    HStack(spacing: 4) {
+                        Text(sourceNode?.label ?? "?")
+                            .font(.caption)
+                        Image(systemName: "arrow.right")
+                            .font(.caption2)
+                            .foregroundColor(edge.relationship.color)
+                        Text(targetNode?.label ?? "?")
+                            .font(.caption)
+                    }
+                    .foregroundColor(.secondary)
+                }
+
+                Spacer()
+
+                Button(action: { graph.selectedEdge = nil }) {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.title3)
+                        .foregroundColor(.secondary)
+                }
+                .buttonStyle(.plain)
+            }
+            .padding(.horizontal)
+            .padding(.top, 12)
+            .padding(.bottom, 8)
+
+            Divider()
+
+            // Scrollable content
+            ScrollView {
+                VStack(alignment: .leading, spacing: 16) {
+                    // Relationship Info
+                    DetailSectionInline(title: "Relationship", icon: "link") {
+                        DetailRowInline(label: "Type", value: edge.relationship.rawValue)
+                        DetailRowInline(label: "Edge ID", value: edge.id)
+                        if let details = edge.details {
+                            DetailRowInline(label: "Details", value: details)
+                        }
+                    }
+
+                    // Source Node
+                    if let source = sourceNode {
+                        DetailSectionInline(title: "Source Node", icon: source.type.icon) {
+                            DetailRowInline(label: "Label", value: source.label)
+                            DetailRowInline(label: "Type", value: source.type.rawValue)
+                            if let path = source.path {
+                                DetailRowInline(label: "Path", value: path, copyable: true)
+                            }
+                            if let risk = source.riskScore {
+                                DetailRowInline(label: "Risk", value: "\(risk)/100", color: riskColor(for: risk))
+                            }
+                        }
+                    }
+
+                    // Target Node
+                    if let target = targetNode {
+                        DetailSectionInline(title: "Target Node", icon: target.type.icon) {
+                            DetailRowInline(label: "Label", value: target.label)
+                            DetailRowInline(label: "Type", value: target.type.rawValue)
+                            if let path = target.path {
+                                DetailRowInline(label: "Path", value: path, copyable: true)
+                            }
+                        }
+                    }
+
+                    // Source Persistence Item (if available)
+                    if let item = sourcePersistenceItem {
+                        DetailSectionInline(title: "Persistence Item", icon: "doc.text.fill") {
+                            DetailRowInline(label: "Name", value: item.name)
+                            DetailRowInline(label: "Category", value: item.category.displayName)
+                            DetailRowInline(label: "Trust", value: item.trustLevel.displayName, color: item.trustLevel.color)
+                            DetailRowInline(label: "Enabled", value: item.isEnabled ? "Yes" : "No", color: item.isEnabled ? .green : .secondary)
+                        }
+
+                        if let sig = item.signatureInfo {
+                            DetailSectionInline(title: "Signature", icon: "checkmark.seal") {
+                                DetailRowInline(label: "Signed", value: sig.isSigned ? "Yes" : "No", color: sig.isSigned ? .green : .red)
+                                if let org = sig.organizationName {
+                                    DetailRowInline(label: "Organization", value: org)
+                                }
+                                DetailRowInline(label: "Apple Signed", value: sig.isAppleSigned ? "Yes" : "No", color: sig.isAppleSigned ? .green : .secondary)
+                            }
+                        }
+                    }
+                }
+                .padding()
+            }
+            .frame(maxHeight: 300)
+        }
+        .background(.ultraThinMaterial)
+        .cornerRadius(12)
+        .padding()
+    }
+
+    private func riskColor(for score: Int) -> Color {
+        switch score {
+        case 0..<25: return .green
+        case 25..<50: return .yellow
+        case 50..<75: return .orange
+        default: return .red
+        }
     }
 }
 

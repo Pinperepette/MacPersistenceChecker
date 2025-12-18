@@ -38,12 +38,51 @@ struct NoSelectionView: View {
 
 struct ItemDetailContent: View {
     let item: PersistenceItem
+    @StateObject private var containmentService = SafeContainmentService.shared
+    @State private var showActionResult = false
+    @State private var actionResultMessage = ""
+    @State private var actionResultIsError = false
+    @State private var showActionLog = false
+
+    private var containmentState: ContainmentState {
+        containmentService.getContainmentState(for: item.identifier)
+    }
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
-                // Header
-                ItemDetailHeader(item: item)
+                // Header with Containment Menu
+                ItemDetailHeader(item: item, containmentService: containmentService) { result in
+                    handleContainmentResult(result)
+                }
+
+                // Containment Status Banner (if contained)
+                if containmentState.isContained {
+                    ContainmentStatusBanner(
+                        status: containmentState,
+                        item: item,
+                        onExtend: {
+                            Task {
+                                let result = await containmentService.extendTimeout(item)
+                                handleContainmentResult(result)
+                            }
+                        },
+                        onRelease: {
+                            Task {
+                                let result = await containmentService.releaseItem(item)
+                                handleContainmentResult(result)
+                            }
+                        },
+                        onViewLog: {
+                            showActionLog = true
+                        }
+                    )
+                }
+
+                // Action Log (expandable)
+                if showActionLog {
+                    ContainmentActionLogView(item: item, containmentService: containmentService)
+                }
 
                 Divider()
 
@@ -90,6 +129,26 @@ struct ItemDetailContent: View {
             .padding()
         }
         .navigationTitle(item.name)
+        .alert(actionResultIsError ? "Action Failed" : "Action Completed",
+               isPresented: $showActionResult) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(actionResultMessage)
+        }
+    }
+
+    private func handleContainmentResult(_ result: ContainmentResult) {
+        if result.success {
+            actionResultMessage = result.action?.displayDescription ?? "Action completed successfully"
+            if !result.warnings.isEmpty {
+                actionResultMessage += "\n\nWarnings:\n" + result.warnings.joined(separator: "\n")
+            }
+            actionResultIsError = false
+        } else {
+            actionResultMessage = result.error?.localizedDescription ?? "Unknown error"
+            actionResultIsError = true
+        }
+        showActionResult = true
     }
 }
 
@@ -97,70 +156,81 @@ struct ItemDetailContent: View {
 
 struct ItemDetailHeader: View {
     let item: PersistenceItem
+    @ObservedObject var containmentService: SafeContainmentService
+    var onContainmentResult: (ContainmentResult) -> Void
 
     var body: some View {
-        HStack(alignment: .top, spacing: 16) {
-            // Trust badge (large)
-            ZStack {
-                RoundedRectangle(cornerRadius: 12)
-                    .fill(item.trustLevel.color.opacity(0.15))
-                    .frame(width: 64, height: 64)
+        VStack(spacing: 12) {
+            HStack(alignment: .top, spacing: 16) {
+                // Trust badge (large)
+                ZStack {
+                    RoundedRectangle(cornerRadius: 12)
+                        .fill(item.trustLevel.color.opacity(0.15))
+                        .frame(width: 64, height: 64)
 
-                Image(systemName: item.trustLevel.symbolName)
-                    .font(.system(size: 32))
-                    .foregroundColor(item.trustLevel.color)
-            }
+                    Image(systemName: item.trustLevel.symbolName)
+                        .font(.system(size: 32))
+                        .foregroundColor(item.trustLevel.color)
+                }
 
-            VStack(alignment: .leading, spacing: 8) {
-                // Name
-                Text(item.name)
-                    .font(.title)
-                    .fontWeight(.bold)
+                VStack(alignment: .leading, spacing: 8) {
+                    // Name
+                    Text(item.name)
+                        .font(.title)
+                        .fontWeight(.bold)
 
-                // Identifier
-                Text(item.identifier)
-                    .font(.subheadline)
+                    // Identifier
+                    Text(item.identifier)
+                        .font(.subheadline)
+                        .foregroundColor(.secondary)
+                        .textSelection(.enabled)
+
+                    // Trust level
+                    HStack {
+                        Text(item.trustLevel.displayName)
+                            .font(.caption)
+                            .fontWeight(.medium)
+                            .foregroundColor(.white)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 4)
+                            .background(item.trustLevel.color)
+                            .clipShape(Capsule())
+
+                        Text(item.trustLevel.description)
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+
+                    // Category
+                    HStack {
+                        Image(systemName: item.category.systemImage)
+                        Text(item.category.displayName)
+                    }
+                    .font(.caption)
                     .foregroundColor(.secondary)
-                    .textSelection(.enabled)
-
-                // Trust level
-                HStack {
-                    Text(item.trustLevel.displayName)
-                        .font(.caption)
-                        .fontWeight(.medium)
-                        .foregroundColor(.white)
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 4)
-                        .background(item.trustLevel.color)
-                        .clipShape(Capsule())
-
-                    Text(item.trustLevel.description)
-                        .font(.caption)
-                        .foregroundColor(.secondary)
                 }
 
-                // Category
-                HStack {
-                    Image(systemName: item.category.systemImage)
-                    Text(item.category.displayName)
-                }
-                .font(.caption)
-                .foregroundColor(.secondary)
-            }
+                Spacer()
 
-            Spacer()
+                // Status + Containment Menu
+                VStack(alignment: .trailing, spacing: 8) {
+                    // Containment Menu (prominent)
+                    ContainmentMenu(
+                        item: item,
+                        containmentService: containmentService,
+                        onActionComplete: onContainmentResult
+                    )
 
-            // Status
-            VStack(alignment: .trailing, spacing: 4) {
-                StatusBadge(
-                    title: item.isLoaded ? "Loaded" : (item.isEnabled ? "Enabled" : "Disabled"),
-                    color: item.isLoaded ? .green : (item.isEnabled ? .blue : .secondary)
-                )
+                    StatusBadge(
+                        title: item.isLoaded ? "Loaded" : (item.isEnabled ? "Enabled" : "Disabled"),
+                        color: item.isLoaded ? .green : (item.isEnabled ? .blue : .secondary)
+                    )
 
-                if let date = item.plistModifiedAt {
-                    Text("Modified: \(date.formatted(date: .abbreviated, time: .shortened))")
-                        .font(.caption2)
-                        .foregroundColor(.secondary)
+                    if let date = item.plistModifiedAt {
+                        Text("Modified: \(date.formatted(date: .abbreviated, time: .shortened))")
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                    }
                 }
             }
         }
