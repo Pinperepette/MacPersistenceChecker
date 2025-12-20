@@ -10,7 +10,7 @@ echo ""
 
 # Configuration
 APP_NAME="MacPersistenceChecker"
-VERSION="1.8.0"
+VERSION="1.8.1"
 BUNDLE_ID="com.pinperepette.MacPersistenceChecker"
 MIN_MACOS="13.0"
 

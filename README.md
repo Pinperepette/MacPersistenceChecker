@@ -6,7 +6,7 @@ A native macOS security tool that enumerates everything configured to run automa
 
 ## Download
 
-**[Download MacPersistenceChecker v1.8 (DMG)](https://github.com/Pinperepette/MacPersistenceChecker/releases/download/v1.8/MacPersistenceChecker.dmg)**
+**[Download MacPersistenceChecker v1.8.1 (DMG)](https://github.com/Pinperepette/MacPersistenceChecker/releases/download/v1.8.1/MacPersistenceChecker.dmg)**
 
 - Requires macOS 13.0 or later
 - Universal binary (Apple Silicon & Intel)
