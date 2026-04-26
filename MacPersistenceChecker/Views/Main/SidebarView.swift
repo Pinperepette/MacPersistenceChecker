@@ -283,8 +283,10 @@ struct StatsRow: View {
     }
 }
 
+#if XCODE_PREVIEWS
 #Preview {
     SidebarView()
         .environmentObject(AppState.shared)
         .frame(width: 250)
 }
+#endif

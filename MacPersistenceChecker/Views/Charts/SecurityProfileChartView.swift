@@ -524,6 +524,7 @@ private func polygonPoints(center: CGPoint, radius: CGFloat, sides: Int) -> [CGP
 
 // MARK: - Preview
 
+#if XCODE_PREVIEWS
 #Preview {
     // Preview with empty state
     VStack {
@@ -535,3 +536,4 @@ private func polygonPoints(center: CGPoint, radius: CGFloat, sides: Int) -> [CGP
     .frame(width: 500, height: 400)
     .padding()
 }
+#endif

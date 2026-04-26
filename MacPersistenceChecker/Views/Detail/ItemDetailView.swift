@@ -2073,7 +2073,9 @@ struct AgeAnomalyRow: View {
     }
 }
 
+#if XCODE_PREVIEWS
 #Preview {
     ItemDetailView()
         .environmentObject(AppState.shared)
 }
+#endif

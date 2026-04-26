@@ -167,8 +167,10 @@ struct RiskGaugeView: View {
     }
 }
 
+#if XCODE_PREVIEWS
 #Preview {
     RiskDistributionChartView(items: [])
         .frame(width: 250)
         .padding()
 }
+#endif

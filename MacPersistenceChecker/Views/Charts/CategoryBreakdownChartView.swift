@@ -146,8 +146,10 @@ struct CategorySparklineView: View {
     }
 }
 
+#if XCODE_PREVIEWS
 #Preview {
     CategoryBreakdownChartView(items: [])
         .frame(width: 300)
         .padding()
 }
+#endif

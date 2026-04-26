@@ -367,7 +367,9 @@ struct MITREBadge: View {
     }
 }
 
+#if XCODE_PREVIEWS
 #Preview {
     CategoryListView()
         .environmentObject(AppState.shared)
 }
+#endif

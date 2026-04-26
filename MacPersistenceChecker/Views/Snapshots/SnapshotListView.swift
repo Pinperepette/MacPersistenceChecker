@@ -468,7 +468,9 @@ final class DiffEngine {
     }
 }
 
+#if XCODE_PREVIEWS
 #Preview {
     SnapshotListView()
         .environmentObject(AppState.shared)
 }
+#endif

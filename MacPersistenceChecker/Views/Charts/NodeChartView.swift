@@ -455,6 +455,7 @@ struct StatRow: View {
 
 // MARK: - Preview
 
+#if XCODE_PREVIEWS
 #Preview {
     VStack {
         Text("Node Chart Preview")
@@ -462,3 +463,4 @@ struct StatRow: View {
     .frame(width: 400, height: 200)
     .padding()
 }
+#endif

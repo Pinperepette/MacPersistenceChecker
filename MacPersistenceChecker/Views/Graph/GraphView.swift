@@ -1543,8 +1543,10 @@ struct GraphLegend: View {
 
 // MARK: - Preview
 
+#if XCODE_PREVIEWS
 #Preview {
     GraphView()
         .environmentObject(AppState.shared)
         .frame(width: 800, height: 600)
 }
+#endif

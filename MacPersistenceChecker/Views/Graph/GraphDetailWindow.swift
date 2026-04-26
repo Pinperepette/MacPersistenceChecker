@@ -786,8 +786,10 @@ struct RiskScoreBar: View {
 
 // MARK: - Preview
 
+#if XCODE_PREVIEWS
 #Preview {
     GraphDetailWindowView()
         .environmentObject(AppState.shared)
         .frame(width: 900, height: 700)
 }
+#endif

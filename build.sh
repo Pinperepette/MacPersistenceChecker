@@ -10,7 +10,7 @@ echo ""
 
 # Configuration
 APP_NAME="MacPersistenceChecker"
-VERSION="1.8.1"
+VERSION="1.8.2"
 BUNDLE_ID="com.pinperepette.MacPersistenceChecker"
 MIN_MACOS="13.0"
 
@@ -26,10 +26,25 @@ RESOURCES_DIR="$CONTENTS_DIR/Resources"
 echo "[1/6] Cleaning previous build..."
 rm -rf "$APP_DIR"
 
-# Build release binary
+# Build release binary (universal: arm64 + x86_64) so the app runs natively
+# on Apple Silicon (M1/M2/M3/M4) and Intel Macs without Rosetta.
+# Set UNIVERSAL=0 to build only for the host architecture.
 echo "[2/6] Building release binary..."
 cd "$SCRIPT_DIR"
-swift build -c release
+UNIVERSAL="${UNIVERSAL:-1}"
+if [ "$UNIVERSAL" = "1" ]; then
+    echo "    Building universal (arm64 + x86_64)..."
+    swift build -c release --triple arm64-apple-macosx${MIN_MACOS}
+    swift build -c release --triple x86_64-apple-macosx${MIN_MACOS}
+    mkdir -p "$BUILD_DIR/release"
+    lipo -create \
+        "$BUILD_DIR/arm64-apple-macosx/release/$APP_NAME" \
+        "$BUILD_DIR/x86_64-apple-macosx/release/$APP_NAME" \
+        -output "$BUILD_DIR/release/$APP_NAME"
+    echo "    Architectures: $(lipo -archs "$BUILD_DIR/release/$APP_NAME")"
+else
+    swift build -c release
+fi
 
 # Create app bundle structure
 echo "[3/6] Creating app bundle structure..."

@@ -271,7 +271,9 @@ struct ExtendedScannersToolbarButton: View {
     }
 }
 
+#if XCODE_PREVIEWS
 #Preview {
     ContentView()
         .environmentObject(AppState.shared)
 }
+#endif

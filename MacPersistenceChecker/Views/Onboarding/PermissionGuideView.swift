@@ -196,8 +196,10 @@ struct StepView: View {
     }
 }
 
+#if XCODE_PREVIEWS
 #Preview {
     PermissionGuideView()
         .environmentObject(FullDiskAccessChecker.shared)
         .environmentObject(AppState.shared)
 }
+#endif

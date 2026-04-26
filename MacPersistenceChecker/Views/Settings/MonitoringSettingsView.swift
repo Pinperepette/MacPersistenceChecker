@@ -549,7 +549,9 @@ struct MonitoringSettingsView: View {
 
 // MARK: - Preview
 
+#if XCODE_PREVIEWS
 #Preview {
     MonitoringSettingsView()
         .frame(width: 500, height: 800)
 }
+#endif

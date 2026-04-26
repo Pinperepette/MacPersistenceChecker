@@ -7,8 +7,7 @@ let package = Package(
         .macOS(.v13)
     ],
     products: [
-        .executable(name: "MacPersistenceChecker", targets: ["MacPersistenceChecker"]),
-        .executable(name: "mpc-server", targets: ["MPCServer"])
+        .executable(name: "MacPersistenceChecker", targets: ["MacPersistenceChecker"])
     ],
     dependencies: [
         .package(url: "https://github.com/groue/GRDB.swift.git", from: "6.24.0")
@@ -23,13 +22,6 @@ let package = Package(
             resources: [
                 .process("Resources/KnownVendors.json")
             ]
-        ),
-        .executableTarget(
-            name: "MPCServer",
-            dependencies: [
-                .product(name: "GRDB", package: "GRDB.swift")
-            ],
-            path: "Sources/MPCServer"
         )
     ]
 )

@@ -225,8 +225,8 @@ class PersistenceGraph: ObservableObject {
         for (index, _) in nodes.enumerated() {
             let angle = (2 * .pi * Double(index)) / Double(nodes.count)
             nodes[index].position = CGPoint(
-                x: centerX + radius * cos(angle),
-                y: centerY + radius * sin(angle)
+                x: centerX + radius * Darwin.cos(angle),
+                y: centerY + radius * Darwin.sin(angle)
             )
         }
 

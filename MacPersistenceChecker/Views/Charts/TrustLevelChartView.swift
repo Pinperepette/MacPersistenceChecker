@@ -222,8 +222,10 @@ struct EmptyChartPlaceholder: View {
     }
 }
 
+#if XCODE_PREVIEWS
 #Preview {
     TrustLevelChartView(items: [])
         .frame(width: 220)
         .padding()
 }
+#endif

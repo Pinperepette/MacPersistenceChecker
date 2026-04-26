@@ -226,8 +226,10 @@ struct SidebarChartsSection: View {
     }
 }
 
+#if XCODE_PREVIEWS
 #Preview {
     StatsDashboardView()
         .environmentObject(AppState.shared)
         .frame(width: 800, height: 600)
 }
+#endif

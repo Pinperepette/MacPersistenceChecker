@@ -443,7 +443,9 @@ private struct ToolRow: View {
     }
 }
 
+#if XCODE_PREVIEWS
 #Preview {
     AISettingsView()
         .frame(width: 600, height: 800)
 }
+#endif
