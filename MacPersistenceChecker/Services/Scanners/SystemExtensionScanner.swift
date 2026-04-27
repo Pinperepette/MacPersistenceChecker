@@ -108,8 +108,9 @@ final class SystemExtensionScanner: PersistenceScanner {
 
         // Try to extract path
         if let pathStart = trimmed.range(of: "/"),
-           let pathEnd = trimmed.range(of: ".systemextension") {
-            let fullPath = String(trimmed[pathStart.lowerBound...pathEnd.upperBound])
+           let pathEnd = trimmed.range(of: ".systemextension"),
+           pathStart.lowerBound < pathEnd.upperBound {
+            let fullPath = String(trimmed[pathStart.lowerBound..<pathEnd.upperBound])
             if !fullPath.contains(" ") {
                 item.executablePath = URL(fileURLWithPath: fullPath)
             }
