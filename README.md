@@ -6,6 +6,8 @@
 
 ![Main UI](imm/int.png)
 
+![How It Works](imm/architecture.png)
+
 ## TL;DR
 
 MacPersistenceChecker shows you **everything that runs automatically on your Mac**, explains **why it matters**, and helps you decide **what to keep or remove**.
