@@ -3,10 +3,13 @@ import SwiftUI
 /// Settings view for AI integration
 struct AISettingsView: View {
     @StateObject private var config = AIConfiguration.shared
+    @EnvironmentObject private var appState: AppState
 
     @State private var showAPIKeyField = false
     @State private var testingAPI = false
     @State private var testResult: String?
+    @State private var dryRunDumpURL: URL?
+    @State private var dryRunStatus: String?
 
     var body: some View {
         ScrollView {
@@ -23,6 +26,9 @@ struct AISettingsView: View {
                 }
 
                 Divider()
+                conceptGraphSection
+
+                Divider()
                 mcpServerSection
 
                 Spacer(minLength: 20)
@@ -30,6 +36,60 @@ struct AISettingsView: View {
             .padding()
         }
         .frame(minWidth: 500, minHeight: 400)
+    }
+
+    // MARK: - Concept graph (dry run)
+
+    private var conceptGraphSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 8) {
+                Image(systemName: "point.3.connected.trianglepath.dotted")
+                    .foregroundColor(.purple)
+                Text("Concept Graph")
+                    .font(.headline)
+            }
+
+            Text("Run the concept extractor over the current scan and write a human-readable dump. Use it to see which concepts emerge and how items cluster — useful for tuning the hint files.")
+                .font(.caption)
+                .foregroundColor(.secondary)
+
+            HStack {
+                Button {
+                    runDryRun()
+                } label: {
+                    Label("Run dry-run", systemImage: "play.fill")
+                }
+                .disabled(appState.items.isEmpty)
+
+                Button {
+                    if let url = dryRunDumpURL {
+                        NSWorkspace.shared.open(url)
+                    } else {
+                        NSWorkspace.shared.open(ConceptDryRun.dumpURL)
+                    }
+                } label: {
+                    Label("Open dump file", systemImage: "doc.text")
+                }
+            }
+
+            if let status = dryRunStatus {
+                Text(status)
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+        }
+    }
+
+    private func runDryRun() {
+        let items = appState.items
+        dryRunStatus = "Running on \(items.count) items…"
+        Task.detached(priority: .userInitiated) {
+            let url = ConceptDryRun.run(items: items)
+            await MainActor.run {
+                dryRunDumpURL = url
+                dryRunStatus = "Dump written to \(url.path)"
+            }
+        }
     }
 
     // MARK: - Header

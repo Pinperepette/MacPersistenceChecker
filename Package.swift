@@ -20,7 +20,9 @@ let package = Package(
             ],
             path: "MacPersistenceChecker",
             resources: [
-                .process("Resources/KnownVendors.json")
+                .process("Resources/KnownVendors.json"),
+                .process("Resources/ConceptHints.json"),
+                .copy("Resources/AIPrompts")
             ]
         )
     ]

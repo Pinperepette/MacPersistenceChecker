@@ -451,6 +451,187 @@ final class ClaudeAPIClient {
         return String(text[range]).data(using: .utf8)
     }
 
+    // MARK: - Generic transport (shared with ItemAnalyst)
+
+    /// Sends a chat request and returns the model's raw text content.
+    /// Used by callers that need to parse a custom JSON schema (e.g. ItemAnalyst).
+    func chatRaw(
+        systemPrompt: String,
+        userJSON: String,
+        model: String? = nil,
+        maxTokens: Int = 1024
+    ) async throws -> String {
+        let body: [String: Any] = [
+            "model": model ?? configuration.claudeModel,
+            "max_tokens": maxTokens,
+            "system": systemPrompt,
+            "messages": [
+                ["role": "user", "content": userJSON]
+            ]
+        ]
+
+        var urlRequest = URLRequest(url: apiURL)
+        urlRequest.httpMethod = "POST"
+        urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        urlRequest.setValue(configuration.claudeAPIKey, forHTTPHeaderField: "x-api-key")
+        urlRequest.setValue(apiVersion, forHTTPHeaderField: "anthropic-version")
+        urlRequest.httpBody = try JSONSerialization.data(withJSONObject: body)
+
+        // Use an explicit URLSessionDataTask wrapped in a cancellation handler
+        // so Swift `Task.cancel()` actually aborts the in-flight HTTP request.
+        // Without this, BulkAnalysisCoordinator.cancel() can take 30+s to exit
+        // because URLSession.data(for:) ignores cooperative cancellation.
+        let dataTaskBox = DataTaskBox()
+        let (data, response): (Data, URLResponse) = try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<(Data, URLResponse), Error>) in
+                let task = self.session.dataTask(with: urlRequest) { data, response, error in
+                    if let error = error {
+                        continuation.resume(throwing: error)
+                    } else if let data = data, let response = response {
+                        continuation.resume(returning: (data, response))
+                    } else {
+                        continuation.resume(throwing: ClaudeAPIError.invalidResponse)
+                    }
+                }
+                dataTaskBox.set(task)
+                task.resume()
+            }
+        } onCancel: {
+            dataTaskBox.cancel()
+        }
+
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw ClaudeAPIError.invalidResponse
+        }
+        guard httpResponse.statusCode == 200 else {
+            let errorBody = String(data: data, encoding: .utf8) ?? "Unknown error"
+            throw ClaudeAPIError.apiError(statusCode: httpResponse.statusCode, message: errorBody)
+        }
+
+        let claudeResponse = try JSONDecoder().decode(ClaudeAPIResponse.self, from: data)
+        guard let textContent = claudeResponse.content.first(where: { $0.type == "text" }),
+              let text = textContent.text else {
+            throw ClaudeAPIError.noTextContent
+        }
+        return text
+    }
+
+    /// Thread-safe holder for a URLSessionDataTask reference, so the cancel
+    /// handler can reach into the running request from outside the continuation.
+    private final class DataTaskBox: @unchecked Sendable {
+        private let lock = NSLock()
+        private var task: URLSessionDataTask?
+
+        func set(_ t: URLSessionDataTask) {
+            lock.lock(); defer { lock.unlock() }
+            task = t
+        }
+
+        func cancel() {
+            lock.lock(); defer { lock.unlock() }
+            task?.cancel()
+        }
+    }
+
+    /// Decodes a JSON object from raw text, tolerating model verbosity.
+    /// Strategy: direct → ```json``` fence → outermost `{...}` span. Logs the
+    /// raw response when all three fail so we can iterate on the prompt.
+    func decodeJSON<T: Decodable>(_ type: T.Type, from text: String) throws -> T {
+        if let data = text.data(using: .utf8),
+           let decoded = try? JSONDecoder().decode(T.self, from: data) {
+            return decoded
+        }
+        if let fenced = extractJSON(from: text),
+           let decoded = try? JSONDecoder().decode(T.self, from: fenced) {
+            return decoded
+        }
+        if let braced = extractBracedJSON(from: text),
+           let decoded = try? JSONDecoder().decode(T.self, from: braced) {
+            return decoded
+        }
+        NSLog("[ClaudeAPIClient] decodeJSON failed. Raw text:\n%@", text)
+        Self.appendFailureLog(rawText: text, expecting: String(describing: T.self))
+        throw ClaudeAPIError.invalidJSON(text)
+    }
+
+    /// Persists failed JSON responses to ~/Library/Logs/MacPersistenceChecker/ai_failures.log
+    /// so the user can inspect them without diving into Console.app.
+    private static func appendFailureLog(rawText: String, expecting type: String) {
+        let logsDir = FileManager.default
+            .urls(for: .libraryDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("Logs/MacPersistenceChecker", isDirectory: true)
+        let logFile = logsDir.appendingPathComponent("ai_failures.log")
+
+        let timestamp = ISO8601DateFormatter().string(from: Date())
+        let entry = """
+
+        ===== \(timestamp) — failed to decode \(type) =====
+        \(rawText)
+
+
+        """
+
+        guard let data = entry.data(using: .utf8) else { return }
+
+        try? FileManager.default.createDirectory(at: logsDir, withIntermediateDirectories: true)
+
+        if FileManager.default.fileExists(atPath: logFile.path) {
+            if let handle = try? FileHandle(forWritingTo: logFile) {
+                defer { try? handle.close() }
+                try? handle.seekToEnd()
+                try? handle.write(contentsOf: data)
+            }
+        } else {
+            try? data.write(to: logFile)
+        }
+    }
+
+    /// Finds the first balanced JSON object inside the text, ignoring any
+    /// preamble (e.g. "Here is the analysis:" or "```json"), trailing prose,
+    /// or trailing fence. Tracks string boundaries so braces inside strings
+    /// don't break the count. Returns nil only if the text never balances.
+    private func extractBracedJSON(from text: String) -> Data? {
+        guard let firstBrace = text.firstIndex(of: "{") else { return nil }
+
+        var depth = 0
+        var inString = false
+        var escape = false
+        var endIdx: String.Index? = nil
+
+        var idx = firstBrace
+        while idx < text.endIndex {
+            let ch = text[idx]
+            if escape {
+                escape = false
+            } else if inString {
+                if ch == "\\" {
+                    escape = true
+                } else if ch == "\"" {
+                    inString = false
+                }
+            } else {
+                switch ch {
+                case "\"":
+                    inString = true
+                case "{":
+                    depth += 1
+                case "}":
+                    depth -= 1
+                    if depth == 0 {
+                        endIdx = idx
+                    }
+                default:
+                    break
+                }
+            }
+            if endIdx != nil { break }
+            idx = text.index(after: idx)
+        }
+
+        guard let end = endIdx else { return nil }
+        return String(text[firstBrace...end]).data(using: .utf8)
+    }
+
     // MARK: - Single Item Analysis
 
     /// Analyze a single changed persistence item with full details

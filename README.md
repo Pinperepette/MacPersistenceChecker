@@ -1,20 +1,160 @@
 # MacPersistenceChecker
 
-**Show me what stays, explain why it matters, let me decide.**
+> See **EVERYTHING** that runs on your Mac.
+> Understand **WHY** it runs.
+> Decide **WHAT** stays.
 
-A native macOS security tool that enumerates everything configured to run automatically on your Mac. Find malware, unwanted software, or understand what's really running on your system.
+![Main UI](imm/int.png)
+
+## TL;DR
+
+MacPersistenceChecker shows you **everything that runs automatically on your Mac**, explains **why it matters**, and helps you decide **what to keep or remove**.
+
+→ Find malware
+→ Detect hidden persistence
+→ Understand your system in minutes
 
 ## Download
 
-**[Download MacPersistenceChecker v1.8.3 (DMG)](https://github.com/Pinperepette/MacPersistenceChecker/releases/download/v1.8.3/MacPersistenceChecker.dmg)**
+**[Download MacPersistenceChecker v2.0.0 (DMG)](https://github.com/Pinperepette/MacPersistenceChecker/releases/latest)**
 
-- Requires macOS 13.0 or later
-- Universal binary (Apple Silicon & Intel)
-- If macOS says the app is damaged: `xattr -cr /Applications/MacPersistenceChecker.app`
+→ Scan your Mac in under 30 seconds
+→ No install wizard, just open and run
+→ Native macOS, universal (Apple Silicon & Intel), macOS 13+
 
-## What It Does
+> If macOS says the app is damaged: `xattr -cr /Applications/MacPersistenceChecker.app`
 
-MacPersistenceChecker scans every persistence mechanism on macOS, analyzes each item for risk, and gives you the information to decide what should stay and what should go.
+## Real-World Use Cases
+
+- **"Why is my Mac slow?"** → find hidden auto-start apps and login items
+- **"Am I infected?"** → detect suspicious persistence, signed-but-dangerous binaries
+- **"What did this installer add?"** → snapshot diff before/after install with AI explanation
+- **"What runs at login?"** → full visibility across 22+ persistence mechanisms
+- **"Is this safe?"** → AI explains in plain language, with MITRE ATT&CK mapping
+
+## Why not Autoruns (or other tools)?
+
+- **Built for macOS** — not a Windows port. Knows about LaunchAgents, TCC, kernel extensions, dylib hijacking, BTM, MDM profiles, the lot.
+- **AI-assisted triage** (optional) — Claude classifies thousands of items in seconds, learns your environment over time
+- **Knowledge graph** instead of flat lists — decide once per concept, verdict propagates to all related items
+- **Behavioral + context-aware** — risk scores combine signature, behavior, intent mismatch, age anomaly, LOLBins, more
+- **No telemetry, no cloud sync** — all analysis local. AI is opt-in and user-paid via your own Anthropic key
+
+## Privacy & Security
+
+- **No data leaves your machine** unless you opt-in to AI features
+- All scanning, risk scoring, and graph reasoning runs **locally**
+- AI calls go directly to Anthropic with your own API key — no proxy, no logging
+- API key stored in **macOS Keychain**
+- Source code open: see what it sends and how
+
+---
+
+## AI-Powered Analysis
+
+The app **learns your system** and classifies thousands of items automatically.
+
+- 🧠 Groups similar items into concept clusters (6800 items → ~280 clusters)
+- 📚 Learns what you trust — verdicts propagate to related items, including future ones
+- 🔇 Reduces noise over time — first triage is the biggest, then it stays quiet
+- 🎯 Five AI tools: per-item analysis, batch cluster triage, full system report, threat hunting Q&A, snapshot diff explanation
+
+Quick start:
+
+1. **Settings → AI** → paste your Anthropic API key (saved in macOS Keychain)
+2. **Settings → Monitoring** → flip the **Use AI** toggle on
+3. **Toolbar → Triage** to bulk-classify clusters, or **Hunt** to ask natural-language questions
+
+Realistic cost: **<$1/month** for active use, $0 for steady state.
+
+<details>
+<summary><strong>How it works (technical)</strong></summary>
+
+The app builds a **knowledge graph** of every persistence item on your Mac and uses Claude (Anthropic) to reason over it. Classify thousands of items quickly, escalate only what really matters, and learn your system so it answers most questions without further AI calls.
+
+### Reasoning flow
+
+```
+                 ┌──────────────────────────┐
+                 │   Persistence scan       │
+                 │   (e.g. 6800 items)      │
+                 └─────────────┬────────────┘
+                               ▼
+            ┌────────────────────────────────────────┐
+            │  Concept Extraction (deterministic)    │
+            │  6 extractors → vendor / software /    │
+            │  pathCategory / pattern / mechanism /  │
+            │  filename. No AI calls here.           │
+            └─────────────┬──────────────────────────┘
+                          ▼
+            ┌────────────────────────────────────────┐
+            │  Knowledge Graph (SQLite)              │
+            │  • concepts (~280 typically)           │
+            │  • concept_links (subsumes / instance) │
+            │  • item_concepts (m:n)                 │
+            │  • concept_verdicts                    │
+            └─────────────┬──────────────────────────┘
+                          ▼
+            ┌────────────────────────────────────────┐
+            │  Concept Resolver                      │
+            │  for every item, picks the strongest   │
+            │  verdict via a deterministic ladder:   │
+            │  severity → confidence → specificity   │
+            │  → source → recency.                   │
+            └─────────────┬──────────────────────────┘
+                          │
+              ┌───────────┴────────────┐
+              ▼                        ▼
+   ┌──────────────────┐      ┌──────────────────────┐
+   │ Item is already  │      │ Item is unresolved   │
+   │ classified.      │      │ → goes to a cluster. │
+   │ Filter hides it  │      └──────────┬───────────┘
+   │ from "Suspicious"│                 ▼
+   └──────────────────┘      ┌──────────────────────┐
+                             │ Cluster Builder      │
+                             │ groups items by      │
+                             │ identical concept    │
+                             │ signature (sorted    │
+                             │ ids). 6800 items →   │
+                             │ ~280 clusters.       │
+                             └──────────┬───────────┘
+                                        ▼
+                ┌──────────────────────────────────────────┐
+                │ User decides per cluster (one click =    │
+                │ N items decided), OR sends batch to AI:  │
+                │                                          │
+                │   • Trust / Watch / Block (manual)       │
+                │   • Send unresolved clusters to AI       │
+                │     → Haiku batch (15 cluster per call)  │
+                │     → AI returns verdicts attached to    │
+                │       concepts (not items) — propagate   │
+                │       to ALL items linked to those       │
+                │       concepts, including future ones.   │
+                └──────────────────────────────────────────┘
+```
+
+### AI tools
+
+| Tool | Where | Model | Cost / call |
+|---|---|---|---|
+| Analyze with AI (single item) | Item detail → Knowledge Graph | Haiku | ~$0.003 |
+| Smart Triage batch | Toolbar → Triage | Haiku batch | ~$0.005 (15 clusters) |
+| System Report | Toolbar → Report | Sonnet | ~$0.05-0.10 |
+| Threat Hunt | Toolbar → Hunt | Haiku | ~$0.003 |
+| Snapshot Diff | History → Compare → Analyze with AI | Haiku | ~$0.003 |
+
+Daily call cap (default 30) configurable in Settings → AI. Hard ceiling, AI auto-disables when reached.
+
+### Trust controls
+
+User-defined rules **always win** over AI-extracted ones:
+
+- **Trust this item** — singleItem rule, your verdict overrides AI watchlist
+- **Trust this pattern** — pattern rule with TeamID/signature anchor (signed binaries only)
+- **Remove trust** — delete a user-defined rule you added by mistake
+- **Watch / Block** — apply watchlist/malicious verdict to a whole cluster in Smart Triage
+
+</details>
 
 ---
 

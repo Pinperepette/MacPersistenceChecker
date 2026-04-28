@@ -229,9 +229,13 @@ struct DiffView: View {
     let fromSnapshot: Snapshot
     let toSnapshot: Snapshot
     @EnvironmentObject var appState: AppState
+    @StateObject private var aiConfig = AIConfiguration.shared
     @Environment(\.dismiss) private var dismiss
     @State private var diff: SnapshotDiff?
     @State private var isLoading = true
+    @State private var aiAnalysis: SnapshotDiffAnalyst.DiffResult?
+    @State private var isAnalyzingAI = false
+    @State private var aiError: String?
 
     var body: some View {
         NavigationStack {
@@ -247,6 +251,22 @@ struct DiffView: View {
             }
             .navigationTitle("Comparison")
             .toolbar {
+                ToolbarItem(placement: .primaryAction) {
+                    Button {
+                        Task { await runAIAnalysis() }
+                    } label: {
+                        if isAnalyzingAI {
+                            HStack(spacing: 6) {
+                                ProgressView().controlSize(.small)
+                                Text("Analyzing…")
+                            }
+                        } else {
+                            Label(aiAnalysis == nil ? "Analyze with AI" : "Re-analyze",
+                                  systemImage: "sparkles")
+                        }
+                    }
+                    .disabled(!canAnalyzeWithAI)
+                }
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Close") {
                         dismiss()
@@ -254,9 +274,30 @@ struct DiffView: View {
                 }
             }
         }
-        .frame(width: 700, height: 500)
+        .frame(width: 760, height: 600)
         .task {
             await computeDiff()
+        }
+    }
+
+    private var canAnalyzeWithAI: Bool {
+        aiConfig.isAIActive && aiConfig.canMakeCall && diff?.hasChanges == true && !isAnalyzingAI
+    }
+
+    private func runAIAnalysis() async {
+        isAnalyzingAI = true
+        aiError = nil
+        defer { isAnalyzingAI = false }
+        do {
+            let result = try await SnapshotDiffAnalyst.shared.analyze(
+                olderSnapshotID: fromSnapshot.id,
+                newerSnapshotID: toSnapshot.id
+            )
+            aiAnalysis = result
+        } catch let err as SnapshotDiffAnalyst.DiffError {
+            aiError = err.errorDescription
+        } catch {
+            aiError = error.localizedDescription
         }
     }
 
@@ -267,12 +308,87 @@ struct DiffView: View {
 
             Divider()
 
+            if let analysis = aiAnalysis {
+                aiPanel(analysis)
+                Divider()
+            } else if let aiError = aiError {
+                Text(aiError)
+                    .font(.caption)
+                    .foregroundColor(.red)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(Color.red.opacity(0.05))
+                Divider()
+            }
+
             // Content
             if diff.hasChanges {
                 diffList(diff)
             } else {
                 noChangesView
             }
+        }
+    }
+
+    /// AI-written summary panel embedded above the raw diff list. Compact,
+    /// markdown-friendly, copyable.
+    @ViewBuilder
+    private func aiPanel(_ analysis: SnapshotDiffAnalyst.DiffResult) -> some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(spacing: 6) {
+                    Image(systemName: "sparkles").foregroundColor(.purple)
+                    Text("AI summary")
+                        .font(.caption.bold())
+                        .foregroundColor(.secondary)
+                    Spacer()
+                }
+
+                Text(analysis.summary)
+                    .font(.subheadline)
+                    .textSelection(.enabled)
+
+                if !analysis.added.isEmpty {
+                    sectionHeader("Added", color: .green)
+                    ForEach(analysis.added) { entry in
+                        bulletRow(entry)
+                    }
+                }
+                if !analysis.removed.isEmpty {
+                    sectionHeader("Removed", color: .gray)
+                    ForEach(analysis.removed) { entry in
+                        bulletRow(entry)
+                    }
+                }
+                if !analysis.modified.isEmpty {
+                    sectionHeader("Modified", color: .orange)
+                    ForEach(analysis.modified) { entry in
+                        bulletRow(entry)
+                    }
+                }
+            }
+            .padding(12)
+        }
+        .frame(maxHeight: 240)
+        .background(Color.purple.opacity(0.04))
+    }
+
+    private func sectionHeader(_ title: String, color: Color) -> some View {
+        HStack(spacing: 6) {
+            Circle().fill(color).frame(width: 6, height: 6)
+            Text(title).font(.caption.bold()).foregroundColor(.secondary)
+        }
+        .padding(.top, 4)
+    }
+
+    private func bulletRow(_ entry: SnapshotDiffAnalyst.Entry) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text("• \(entry.name)").font(.caption.bold())
+            Text(entry.explanation)
+                .font(.caption)
+                .foregroundColor(.secondary)
+                .padding(.leading, 12)
         }
     }
 

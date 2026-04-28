@@ -304,6 +304,67 @@ final class PersistenceMonitor: ObservableObject {
                 continue
             }
 
+            // Knowledge graph gate: concept resolver primary, per-item rule
+            // matcher fallback. Runs in both AI on/off modes.
+            if let item = change.item {
+                let fingerprint = ItemFingerprint.make(from: item)
+                let confThreshold = 0.7
+
+                // 1) Concept resolver (multi-concept aware, with reasoning).
+                let conceptIDs = ConceptIngestor.shared.conceptIDs(forFingerprint: fingerprint.hash)
+                let resolved = ConceptResolver.shared.resolve(item: item, linkedConceptIDs: conceptIDs)
+                if case .classified(let verdict, let confidence) = resolved.outcome {
+                    NSLog("[PersistenceMonitor] Concept resolver verdict=%@ conf=%.2f via %@",
+                          verdict.rawValue, confidence, resolved.winningConceptID ?? "?")
+                    switch verdict {
+                    case .benign:
+                        configuration.recordNotification(forIdentifier: itemIdentifier)
+                        _ = try? KnowledgeGraphStore.shared.recordSighting(fingerprint)
+                        continue
+                    case .watchlist, .malicious:
+                        await NotificationDispatcher.shared.send(change: change, relevance: max(relevance, 80))
+                        configuration.recordNotification(forIdentifier: itemIdentifier)
+                        await MainActor.run { [weak self] in
+                            self?.lastChange = change
+                            self?.changeCount += 1
+                            self?.unacknowledgedCount += 1
+                        }
+                        _ = try? KnowledgeGraphStore.shared.recordSighting(fingerprint)
+                        continue
+                    }
+                }
+
+                // 2) Fallback to per-item RuleMatcher (legacy single-item user
+                //    trust + fingerprint-bound AI rules from before the concept
+                //    layer). Same semantics as before.
+                let lookup = RuleMatcher.shared.evaluate(item: item)
+                switch lookup {
+                case .knownBenign(let rule, let confidence) where confidence >= confThreshold:
+                    NSLog("[PersistenceMonitor] Rule fallback benign (rule=%@, conf=%.2f)", rule.id, confidence)
+                    try? KnowledgeGraphStore.shared.confirmRule(id: rule.id)
+                    _ = try? KnowledgeGraphStore.shared.recordSighting(fingerprint, matchedRuleId: rule.id)
+                    configuration.recordNotification(forIdentifier: itemIdentifier)
+                    continue
+
+                case .knownThreat(let rule, let confidence, let isMalicious) where confidence >= confThreshold:
+                    NSLog("[PersistenceMonitor] Rule fallback threat (rule=%@, conf=%.2f, malicious=%@)",
+                          rule.id, confidence, isMalicious ? "YES" : "NO")
+                    try? KnowledgeGraphStore.shared.confirmRule(id: rule.id)
+                    _ = try? KnowledgeGraphStore.shared.recordSighting(fingerprint, matchedRuleId: rule.id)
+                    await NotificationDispatcher.shared.send(change: change, relevance: max(relevance, 80))
+                    configuration.recordNotification(forIdentifier: itemIdentifier)
+                    await MainActor.run { [weak self] in
+                        self?.lastChange = change
+                        self?.changeCount += 1
+                        self?.unacknowledgedCount += 1
+                    }
+                    continue
+
+                default:
+                    _ = try? KnowledgeGraphStore.shared.recordSighting(fingerprint)
+                }
+            }
+
             if isAIActive {
                 // AI-powered analysis
                 await processChangeWithAI(change)

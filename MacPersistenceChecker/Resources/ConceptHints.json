@@ -1,0 +1,56 @@
+{
+  "version": 1,
+  "pathHints": [
+    { "id": "path:/opt/homebrew",         "displayName": "Homebrew (Apple Silicon)",   "prefix": "/opt/homebrew/" },
+    { "id": "path:/usr/local/Cellar",     "displayName": "Homebrew (Intel) — Cellar",  "prefix": "/usr/local/Cellar/" },
+    { "id": "path:/usr/local/lib",        "displayName": "Homebrew (Intel) — lib",     "prefix": "/usr/local/lib/" },
+    { "id": "path:/usr/local/bin",        "displayName": "Homebrew (Intel) — bin",     "prefix": "/usr/local/bin/" },
+    { "id": "path:/usr/local/sbin",       "displayName": "Homebrew (Intel) — sbin",    "prefix": "/usr/local/sbin/" },
+    { "id": "path:/usr/local/opt",        "displayName": "Homebrew (Intel) — opt",     "prefix": "/usr/local/opt/" },
+    { "id": "path:/Applications",         "displayName": "Applications folder",        "prefix": "/Applications/" },
+    { "id": "path:/Library/LaunchAgents", "displayName": "System LaunchAgents",        "prefix": "/Library/LaunchAgents/" },
+    { "id": "path:/Library/LaunchDaemons","displayName": "System LaunchDaemons",       "prefix": "/Library/LaunchDaemons/" },
+    { "id": "path:/Library/Application Support", "displayName": "App Support",         "prefix": "/Library/Application Support/" },
+    { "id": "path:/System",               "displayName": "System (read-only)",         "prefix": "/System/" },
+    { "id": "path:/usr/lib",              "displayName": "System libraries",           "prefix": "/usr/lib/" },
+    { "id": "path:user-launchagents",     "displayName": "User LaunchAgents",          "prefix": "Library/LaunchAgents/", "userRelative": true },
+    { "id": "path:user-launchdaemons",    "displayName": "User LaunchDaemons",         "prefix": "Library/LaunchDaemons/", "userRelative": true },
+    { "id": "path:user-app-support",      "displayName": "User App Support",           "prefix": "Library/Application Support/", "userRelative": true },
+    { "id": "path:tmp",                   "displayName": "Temp directory",             "prefix": "/tmp/" },
+    { "id": "path:var-folders",           "displayName": "Sandbox temp",               "prefix": "/private/var/folders/" }
+  ],
+
+  "bundleHints": [
+    { "id": "pattern:com.apple",          "displayName": "Apple bundle ID",            "prefix": "com.apple." },
+    { "id": "pattern:homebrew.mxcl",      "displayName": "Homebrew launchctl service", "prefix": "homebrew.mxcl." },
+    { "id": "pattern:com.microsoft",      "displayName": "Microsoft",                  "prefix": "com.microsoft." },
+    { "id": "pattern:com.google",         "displayName": "Google",                     "prefix": "com.google." },
+    { "id": "pattern:com.adobe",          "displayName": "Adobe",                      "prefix": "com.adobe." },
+    { "id": "pattern:com.docker",         "displayName": "Docker",                     "prefix": "com.docker." },
+    { "id": "pattern:com.jetbrains",      "displayName": "JetBrains",                  "prefix": "com.jetbrains." },
+    { "id": "pattern:com.github",         "displayName": "GitHub",                     "prefix": "com.github." },
+    { "id": "pattern:org.mozilla",        "displayName": "Mozilla",                    "prefix": "org.mozilla." },
+    { "id": "pattern:com.spotify",        "displayName": "Spotify",                    "prefix": "com.spotify." },
+    { "id": "pattern:com.dropbox",        "displayName": "Dropbox",                    "prefix": "com.dropbox." },
+    { "id": "pattern:com.slack",          "displayName": "Slack",                      "prefix": "com.slack." },
+    { "id": "pattern:us.zoom",            "displayName": "Zoom",                       "prefix": "us.zoom." }
+  ],
+
+  "filenamePatterns": [
+    {
+      "id": "pattern:unix-dylib-semver",
+      "displayName": "Unix-style versioned dylib",
+      "regex": "^lib[A-Za-z0-9_+]+([.\\-][0-9.]+)?\\.dylib$"
+    },
+    {
+      "id": "pattern:helper-app",
+      "displayName": "Helper app bundle",
+      "regex": ".*Helper(\\s+\\(.+\\))?\\.app$"
+    },
+    {
+      "id": "pattern:com-prefix-plist",
+      "displayName": "Reverse-DNS plist",
+      "regex": "^(com|org|io|us)\\.[A-Za-z0-9-]+(\\.[A-Za-z0-9-]+)+\\.plist$"
+    }
+  ]
+}

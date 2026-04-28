@@ -191,6 +191,117 @@ final class DatabaseManager {
             }
         }
 
+        // Migration 5: Knowledge graph - rules and fingerprints learned over time
+        migrator.registerMigration("v5_knowledge_graph") { db in
+            // Rules: emerge from user actions or AI verdicts. Match items by predicate.
+            try db.create(table: "knowledgeRules") { t in
+                t.column("id", .text).primaryKey()
+                t.column("source", .text).notNull()           // aiExtracted | userDefined
+                t.column("scope", .text).notNull()            // singleItem | pattern
+                t.column("verdict", .text).notNull()          // benign | watchlist | malicious
+                t.column("predicateJSON", .text).notNull()    // conjunctive predicate
+                t.column("confidence", .double).notNull().defaults(to: 0.5)
+                t.column("occurrences", .integer).notNull().defaults(to: 1)
+                t.column("sourceItemsJSON", .text)            // fingerprint hashes that confirmed it
+                t.column("rationale", .text)
+                t.column("createdAt", .double).notNull()
+                t.column("lastConfirmedAt", .double).notNull()
+                t.column("disabled", .boolean).notNull().defaults(to: false)
+            }
+
+            try db.create(index: "idx_rules_source", on: "knowledgeRules", columns: ["source"])
+            try db.create(index: "idx_rules_scope", on: "knowledgeRules", columns: ["scope"])
+            try db.create(index: "idx_rules_verdict", on: "knowledgeRules", columns: ["verdict"])
+            try db.create(index: "idx_rules_disabled", on: "knowledgeRules", columns: ["disabled"])
+
+            // Fingerprints: identity-based hash for items we've seen, linked to a rule if matched
+            try db.create(table: "knowledgeFingerprints") { t in
+                t.autoIncrementedPrimaryKey("rowId")
+                t.column("fingerprintHash", .text).notNull().unique()
+                t.column("teamID", .text)
+                t.column("pathNormalized", .text).notNull()
+                t.column("bundleIdentifier", .text)
+                t.column("category", .text).notNull()
+                t.column("firstSeenAt", .double).notNull()
+                t.column("lastSeenAt", .double).notNull()
+                t.column("matchedRuleId", .text)              // nullable, soft FK to knowledgeRules.id
+                t.column("occurrences", .integer).notNull().defaults(to: 1)
+            }
+
+            try db.create(index: "idx_fingerprints_teamID", on: "knowledgeFingerprints", columns: ["teamID"])
+            try db.create(index: "idx_fingerprints_path", on: "knowledgeFingerprints", columns: ["pathNormalized"])
+            try db.create(index: "idx_fingerprints_matchedRule", on: "knowledgeFingerprints", columns: ["matchedRuleId"])
+        }
+
+        // Migration 6: Concept graph — first-class concepts, links, item↔concept
+        // associations and concept-attached verdicts. Sits ABOVE the v5 rule cache
+        // (rules and fingerprints from v5 stay as the per-item fallback layer).
+        migrator.registerMigration("v6_concept_graph") { db in
+            // Concepts: nodes in the graph (vendor, software, path, pattern, mechanism, userDefined)
+            try db.create(table: "concepts") { t in
+                t.column("id", .text).primaryKey()
+                t.column("kind", .text).notNull()
+                t.column("display_name", .text).notNull()
+                t.column("attributes_json", .text)
+                t.column("extractor_version", .integer).notNull().defaults(to: 1)
+                t.column("occurrences", .integer).notNull().defaults(to: 0)
+                t.column("first_seen_at", .double).notNull()
+                t.column("last_seen_at", .double).notNull()
+                t.column("agent_notes", .text)
+                t.column("promoted_at", .double)
+            }
+            try db.create(index: "idx_concepts_kind", on: "concepts", columns: ["kind"])
+            try db.create(index: "idx_concepts_extractor_version", on: "concepts", columns: ["extractor_version"])
+
+            // Edges between concepts
+            try db.create(table: "concept_links") { t in
+                t.column("from_id", .text).notNull()
+                t.column("to_id", .text).notNull()
+                t.column("relation", .text).notNull()
+                t.column("source", .text).notNull()
+                t.column("weight", .double).notNull().defaults(to: 1.0)
+                t.column("created_at", .double).notNull()
+                t.primaryKey(["from_id", "to_id", "relation"])
+            }
+            try db.create(index: "idx_concept_links_from", on: "concept_links", columns: ["from_id"])
+            try db.create(index: "idx_concept_links_to", on: "concept_links", columns: ["to_id"])
+            try db.create(index: "idx_concept_links_relation", on: "concept_links", columns: ["relation"])
+
+            // Item ↔ concept association (m:n)
+            try db.create(table: "item_concepts") { t in
+                t.column("fingerprint_hash", .text).notNull()
+                t.column("concept_id", .text).notNull()
+                t.column("signal", .text)
+                t.column("extractor_version", .integer).notNull()
+                t.column("added_at", .double).notNull()
+                t.primaryKey(["fingerprint_hash", "concept_id"])
+            }
+            try db.create(index: "idx_item_concepts_fingerprint", on: "item_concepts", columns: ["fingerprint_hash"])
+            try db.create(index: "idx_item_concepts_concept", on: "item_concepts", columns: ["concept_id"])
+
+            // Verdicts attached to concepts (m:n with knowledgeRules)
+            try db.create(table: "concept_verdicts") { t in
+                t.column("id", .text).primaryKey()
+                t.column("concept_id", .text).notNull()
+                t.column("rule_id", .text).notNull()
+                t.column("source", .text).notNull()
+                t.column("weight", .double).notNull().defaults(to: 1.0)
+                t.column("created_at", .double).notNull()
+                t.column("confirmed_at", .double).notNull()
+            }
+            try db.create(index: "idx_concept_verdicts_concept", on: "concept_verdicts", columns: ["concept_id"])
+            try db.create(index: "idx_concept_verdicts_rule", on: "concept_verdicts", columns: ["rule_id"])
+
+            // Cluster cache: items grouped by concept signature
+            try db.create(table: "clusters") { t in
+                t.column("signature_hash", .text).primaryKey()
+                t.column("concept_ids_json", .text).notNull()
+                t.column("member_count", .integer).notNull().defaults(to: 0)
+                t.column("current_verdict", .text)
+                t.column("last_classified_at", .double)
+            }
+        }
+
         try migrator.migrate(dbQueue)
     }
 

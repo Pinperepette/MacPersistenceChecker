@@ -81,6 +81,34 @@ struct ContentView: View {
                 .help("View statistics dashboard with charts")
             }
 
+            ToolbarItemGroup(placement: .primaryAction) {
+                Button {
+                    openWindow(id: "smart-triage-window")
+                } label: {
+                    Label("Triage", systemImage: "rectangle.3.group")
+                }
+                .disabled(appState.items.isEmpty)
+                .help("Cluster-based triage: decide once per concept, propagate to all matching items")
+
+                Button {
+                    openWindow(id: "health-report-window")
+                } label: {
+                    Label("Report", systemImage: "doc.text.magnifyingglass")
+                }
+                .disabled(appState.items.isEmpty)
+                .help("Generate an AI-written narrative health report on this Mac's persistence posture")
+
+                Button {
+                    openWindow(id: "threat-hunt-window")
+                } label: {
+                    Label("Hunt", systemImage: "magnifyingglass.circle")
+                }
+                .disabled(appState.items.isEmpty)
+                .help("Ask a natural-language question against your persistence inventory")
+
+                ShowTrustedToggleButton()
+            }
+
             ToolbarItem(placement: .primaryAction) {
                 ForensicExportButton()
             }
@@ -237,6 +265,31 @@ struct ForensicExportButton: View {
         let formatter = DateFormatter()
         formatter.dateFormat = "yyyy-MM-dd_HHmmss"
         return formatter.string(from: Date())
+    }
+}
+
+// MARK: - Show Trusted Toggle
+
+struct ShowTrustedToggleButton: View {
+    @EnvironmentObject var appState: AppState
+
+    var body: some View {
+        Button {
+            appState.hideGraphTrusted.toggle()
+        } label: {
+            HStack(spacing: 4) {
+                Image(systemName: appState.hideGraphTrusted ? "eye.slash" : "eye")
+                    .foregroundColor(appState.hideGraphTrusted ? .secondary : .accentColor)
+                if appState.hideGraphTrusted, appState.trustedHiddenCount > 0 {
+                    Text("\(appState.trustedHiddenCount) hidden")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+            }
+        }
+        .help(appState.hideGraphTrusted
+              ? "Trusted items are hidden — click to show them"
+              : "Trusted items are visible — click to hide them")
     }
 }
 

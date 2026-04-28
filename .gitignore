@@ -6,3 +6,19 @@ DerivedData/
 .swiftpm/
 MacPersistenceChecker.app/
 MacPersistenceChecker.dmg
+
+# Stray Swift build artifacts (sometimes leak into root)
+*.swiftdeps
+*.swiftdeps~
+*.o
+*.d
+
+# Untracked alternate Sources path (used during dev, not the actual target)
+/Sources/
+
+# Editor / agent state
+.claude/
+
+# Misc
+*.log
+*.tmp

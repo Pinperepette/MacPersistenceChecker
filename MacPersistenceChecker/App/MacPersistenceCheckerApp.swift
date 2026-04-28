@@ -75,6 +75,38 @@ struct MacPersistenceCheckerApp: App {
         .windowStyle(.automatic)
         .defaultSize(width: 900, height: 650)
 
+        // AI Bulk Review Window
+        Window("AI Review", id: "ai-bulk-window") {
+            BulkAIAnalysisView()
+                .environmentObject(appState)
+        }
+        .windowStyle(.automatic)
+        .defaultSize(width: 820, height: 600)
+
+        // Smart Triage (cluster-first) Window
+        Window("Smart Triage", id: "smart-triage-window") {
+            SmartTriageView()
+                .environmentObject(appState)
+        }
+        .windowStyle(.automatic)
+        .defaultSize(width: 900, height: 700)
+
+        // System Health Report Window (Sonnet)
+        Window("System Report", id: "health-report-window") {
+            HealthReportView()
+                .environmentObject(appState)
+        }
+        .windowStyle(.automatic)
+        .defaultSize(width: 760, height: 700)
+
+        // Threat Hunt Q&A Window (Haiku)
+        Window("Threat Hunt", id: "threat-hunt-window") {
+            ThreatHuntView()
+                .environmentObject(appState)
+        }
+        .windowStyle(.automatic)
+        .defaultSize(width: 800, height: 700)
+
         Settings {
             SettingsView()
                 .environmentObject(appState)
@@ -327,7 +359,7 @@ struct AboutView: View {
                 .font(.title)
                 .fontWeight(.bold)
 
-            Text("Version 1.8.0")
+            Text("Version 2.0.0")
                 .foregroundColor(.secondary)
 
             Text("A comprehensive tool for monitoring macOS persistence mechanisms.")

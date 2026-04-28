@@ -10,7 +10,7 @@ echo ""
 
 # Configuration
 APP_NAME="MacPersistenceChecker"
-VERSION="1.8.3"
+VERSION="2.0.0"
 BUNDLE_ID="com.pinperepette.MacPersistenceChecker"
 MIN_MACOS="13.0"
 
@@ -59,6 +59,23 @@ if [ -f "$SCRIPT_DIR/AppIcon.icns" ]; then
     cp "$SCRIPT_DIR/AppIcon.icns" "$RESOURCES_DIR/"
     echo "    Icon: AppIcon.icns copied"
 fi
+
+# Copy SwiftPM resource bundle contents into the app Resources/ so that
+# Bundle.main.url(forResource:) finds them at runtime (KnownVendors.json,
+# AIPrompts/*.md, etc.). The arm64 build's resource bundle is identical to
+# the x86_64 one, so we copy from whichever exists.
+RESOURCE_BUNDLE_NAMES=(
+    "$BUILD_DIR/arm64-apple-macosx/release/${APP_NAME}_${APP_NAME}.bundle"
+    "$BUILD_DIR/x86_64-apple-macosx/release/${APP_NAME}_${APP_NAME}.bundle"
+    "$BUILD_DIR/release/${APP_NAME}_${APP_NAME}.bundle"
+)
+for bundle in "${RESOURCE_BUNDLE_NAMES[@]}"; do
+    if [ -d "$bundle" ]; then
+        cp -R "$bundle"/* "$RESOURCES_DIR/" 2>/dev/null || true
+        echo "    Resources: copied from $(basename "$(dirname "$bundle")")/"
+        break
+    fi
+done
 
 # Create Info.plist
 echo "[4/6] Creating Info.plist..."

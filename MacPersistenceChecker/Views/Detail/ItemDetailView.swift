@@ -101,6 +101,11 @@ struct ItemDetailContent: View {
 
                 Divider()
 
+                // Knowledge Graph (user trust + AI-extracted rules)
+                KnowledgeGraphSection(item: item)
+
+                Divider()
+
                 // Signed-but-Dangerous Analysis
                 SignedButDangerousSection(item: item)
 

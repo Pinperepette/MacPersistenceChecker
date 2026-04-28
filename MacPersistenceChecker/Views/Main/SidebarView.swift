@@ -35,22 +35,29 @@ struct SidebarView: View {
 
             // Overview section
             Section("Overview") {
-                NavigationLink(value: Optional<PersistenceCategory>.none) {
-                    Label {
-                        HStack {
-                            Text("All Items")
-                            Spacer()
-                            Text("\(appState.totalCount)")
-                                .font(.caption)
-                                .foregroundColor(.secondary)
-                                .padding(.horizontal, 6)
-                                .padding(.vertical, 2)
-                                .background(Color.secondary.opacity(0.2))
-                                .clipShape(Capsule())
-                        }
-                    } icon: {
-                        Image(systemName: "list.bullet")
+                Label {
+                    HStack {
+                        Text("All Items")
+                        Spacer()
+                        Text("\(appState.totalCount)")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(Color.secondary.opacity(0.2))
+                            .clipShape(Capsule())
                     }
+                } icon: {
+                    Image(systemName: "list.bullet")
+                }
+                .contentShape(Rectangle())
+                .onTapGesture {
+                    // Explicit tap handler so the behaviour is identical
+                    // regardless of NavigationSplitView's internal selection
+                    // routing — also clears any quick-filter (Suspicious) that
+                    // was leaving trustFilter set when returning to All Items.
+                    appState.selectedCategory = nil
+                    appState.trustFilter = nil
                 }
                 .tag(Optional<PersistenceCategory>.none)
 

@@ -61,6 +61,17 @@ final class AppState: ObservableObject {
     /// Show only enabled items
     @Published var showOnlyEnabled: Bool = false
 
+    /// Hide items the knowledge graph has classified as benign with high confidence.
+    /// Default off — the user opts in via the eye toggle. With a dense graph
+    /// (thousands of accumulated rules) the auto-hide can wipe out almost every
+    /// item, leaving the user staring at a near-empty list at launch.
+    @Published var hideGraphTrusted: Bool = UserDefaults.standard.object(forKey: "hideGraphTrusted") as? Bool ?? false {
+        didSet {
+            UserDefaults.standard.set(hideGraphTrusted, forKey: "hideGraphTrusted")
+            refreshFilter()
+        }
+    }
+
     // MARK: - UI State
 
     /// Whether to show snapshots sheet
@@ -123,8 +134,17 @@ final class AppState: ObservableObject {
         // Ensure database is initialized before we try to load from it
         ensureDatabaseInitialized()
         setupBindings()
-        loadSnapshots()
-        loadCachedScan()
+        // Heavy DB reads (snapshots, cached scan with 6800+ JSON-decoded items)
+        // run off the main thread so the UI can show the chrome immediately.
+        // The @Published assignments hop back to main when the data is ready.
+        Task.detached(priority: .userInitiated) { [weak self] in
+            await self?.loadSnapshotsAsync()
+            await self?.loadCachedScanAsync()
+        }
+        // Pre-warm the knowledge-graph rule cache + concept cache off the main
+        // thread so the first filter / eye-toggle never blocks on SQLite.
+        RuleMatcher.shared.preload()
+        ConceptStore.shared.preload()
         // Note: Containment and Monitor are initialized lazily to avoid permission prompts on launch
     }
 
@@ -158,84 +178,243 @@ final class AppState: ObservableObject {
         }
     }
 
-    private func setupBindings() {
-        // Update filtered items when selection, search, or filter changes
-        Publishers.CombineLatest4(
-            $items,
-            $selectedCategory,
-            $searchQuery,
-            $trustFilter
-        )
-        .combineLatest($showOnlyEnabled, $sortOrder)
-        .debounce(for: .milliseconds(50), scheduler: RunLoop.main)
-        .receive(on: RunLoop.main)
-        .sink { [weak self] combined in
-            let ((items, category, query, trustFilter), showOnlyEnabled, sortOrder) = combined
-            self?.updateFilteredItems(
-                items: items,
-                category: category,
-                query: query,
-                trustFilter: trustFilter,
-                showOnlyEnabled: showOnlyEnabled,
-                sortOrder: sortOrder
-            )
+    /// Async variant: reads + JSON-decodes the cached scan off the main thread
+    /// (6800+ PersistenceItems is 300-800ms of decode work). The @Published
+    /// assignment hops back to the main actor; the UI sees a single state
+    /// transition once everything is ready, with no main-thread freeze.
+    private func loadCachedScanAsync() async {
+        NSLog("[AppState] Loading cached scan (async)...")
+        let cached = await Task.detached(priority: .userInitiated) {
+            do {
+                return try DatabaseManager.shared.loadLastScan()
+            } catch {
+                NSLog("[AppState] Failed to load cached scan: %@", error.localizedDescription)
+                return nil
+            }
+        }.value
+
+        guard let cached else {
+            NSLog("[AppState] No cached scan found")
+            return
         }
-        .store(in: &cancellables)
 
-        // Observe scanner state
-        scanner.$isScanning
-            .assign(to: &$isScanning)
+        await MainActor.run { [weak self] in
+            self?.items = cached.items
+            self?.lastScanDate = cached.scanDate
+            NSLog("[AppState] Loaded %d items from cache", cached.items.count)
+        }
 
-        scanner.$progress
-            .assign(to: &$scanProgress)
-
-        scanner.$currentCategory
-            .assign(to: &$currentScanCategory)
+        // Kick off concept ingest in the background so the resolver has
+        // associations available before the user opens Smart Triage.
+        let snapshot = cached.items
+        Task.detached(priority: .utility) { [weak self] in
+            _ = await ConceptIngestor.shared.ingest(items: snapshot)
+            await MainActor.run { self?.refreshFilter() }
+        }
     }
 
-    private func updateFilteredItems(
-        items: [PersistenceItem],
-        category: PersistenceCategory?,
-        query: String,
-        trustFilter: TrustLevel?,
-        showOnlyEnabled: Bool,
-        sortOrder: SortOrder
-    ) {
-        var filtered = items
+    /// Async variant of loadSnapshots for the same reason as loadCachedScanAsync.
+    private func loadSnapshotsAsync() async {
+        let snapshots: [Snapshot] = await Task.detached(priority: .userInitiated) {
+            (try? DatabaseManager.shared.getAllSnapshots()) ?? []
+        }.value
+        await MainActor.run { [weak self] in
+            self?.snapshots = snapshots
+        }
+    }
 
-        // Filter by category
-        if let category = category {
+    /// Trigger that fires when something outside the @Published chain
+    /// requests a filter refresh (e.g. after a Trust action mutates the
+    /// knowledge graph but the items themselves haven't changed). Subscribed
+    /// to in `setupBindings` so manual refreshes go through the same off-main
+    /// pipeline as automatic ones.
+    private let manualRefreshSubject = PassthroughSubject<Void, Never>()
+
+    /// Inputs to a single filter pass. Bundled so we can pass a Sendable value
+    /// across thread boundaries without dragging AppState.
+    private struct FilterInputs {
+        let items: [PersistenceItem]
+        let category: PersistenceCategory?
+        let query: String
+        let trustFilter: TrustLevel?
+        let showOnlyEnabled: Bool
+        let sortOrder: SortOrder
+        let hideGraphTrusted: Bool
+    }
+
+    /// Output of `Self.computeFilter`. Light value type, safe to pass to main.
+    private struct FilterResult {
+        let items: [PersistenceItem]
+        let hiddenCount: Int
+        let suspiciousCount: Int
+    }
+
+    private func setupBindings() {
+        // Combine all filter inputs into a single trigger. We stay on the main
+        // queue here (so SwiftUI's binding semantics are not perturbed) and
+        // do the heavy filter work inside the sink, on a detached background
+        // task. The sink itself is light — just snapshots inputs and dispatches.
+        Publishers.CombineLatest4($items, $selectedCategory, $searchQuery, $trustFilter)
+            .combineLatest($showOnlyEnabled, $sortOrder)
+            .combineLatest($hideGraphTrusted)
+            .debounce(for: .milliseconds(80), scheduler: DispatchQueue.main)
+            .sink { [weak self] combined in
+                let (((items, cat, query, trust), showOnly, order), hideTrust) = combined
+                let inputs = FilterInputs(
+                    items: items,
+                    category: cat,
+                    query: query,
+                    trustFilter: trust,
+                    showOnlyEnabled: showOnly,
+                    sortOrder: order,
+                    hideGraphTrusted: hideTrust
+                )
+                self?.scheduleFilter(inputs: inputs)
+            }
+            .store(in: &cancellables)
+
+        // Manual refresh fires from refreshFilter() — same path as automatic
+        // emissions so the filter is computed off main here too.
+        manualRefreshSubject
+            .sink { [weak self] _ in
+                guard let self else { return }
+                let inputs = FilterInputs(
+                    items: self.items,
+                    category: self.selectedCategory,
+                    query: self.searchQuery,
+                    trustFilter: self.trustFilter,
+                    showOnlyEnabled: self.showOnlyEnabled,
+                    sortOrder: self.sortOrder,
+                    hideGraphTrusted: self.hideGraphTrusted
+                )
+                self.scheduleFilter(inputs: inputs)
+            }
+            .store(in: &cancellables)
+
+        // Observe scanner state
+        scanner.$isScanning.assign(to: &$isScanning)
+        scanner.$progress.assign(to: &$scanProgress)
+        scanner.$currentCategory.assign(to: &$currentScanCategory)
+    }
+
+    /// Bookkeeping for filter scheduling: only one filter task runs at a time.
+    /// If a new emission arrives while one is in flight, the previous task is
+    /// cancelled so we don't waste CPU on stale inputs.
+    private var pendingFilterTask: Task<Void, Never>?
+
+    private func scheduleFilter(inputs: FilterInputs) {
+        pendingFilterTask?.cancel()
+        pendingFilterTask = Task.detached(priority: .userInitiated) { [weak self] in
+            guard !Task.isCancelled else { return }
+            let result = AppState.computeFilter(inputs: inputs)
+            guard !Task.isCancelled else { return }
+            let appState = self
+            await MainActor.run {
+                appState?.filteredItems = result.items
+                appState?.trustedHiddenCount = result.hiddenCount
+                appState?.suspiciousCount = result.suspiciousCount
+            }
+        }
+    }
+
+    /// Pure, thread-safe filter computation. Lives off-main; the result is
+    /// pushed to @Published on main by the Combine sink in `setupBindings`.
+    /// Reads from globally-thread-safe singletons (ConceptIngestor /
+    /// ConceptResolver / RuleMatcher all use NSLock-protected caches).
+    /// `nonisolated` because we explicitly call it from a detached Task.
+    private nonisolated static func computeFilter(inputs: FilterInputs) -> FilterResult {
+        var filtered = inputs.items
+
+        if let category = inputs.category {
             filtered = filtered.filter { $0.category == category }
         }
 
-        // Filter by search query
-        if !query.isEmpty {
-            let lowercaseQuery = query.lowercased()
+        if !inputs.query.isEmpty {
+            let lq = inputs.query.lowercased()
             filtered = filtered.filter { item in
-                item.name.lowercased().contains(lowercaseQuery) ||
-                item.identifier.lowercased().contains(lowercaseQuery) ||
-                (item.signatureInfo?.organizationName?.lowercased().contains(lowercaseQuery) ?? false) ||
-                (item.signatureInfo?.teamIdentifier?.lowercased().contains(lowercaseQuery) ?? false)
+                item.name.lowercased().contains(lq) ||
+                item.identifier.lowercased().contains(lq) ||
+                (item.signatureInfo?.organizationName?.lowercased().contains(lq) ?? false) ||
+                (item.signatureInfo?.teamIdentifier?.lowercased().contains(lq) ?? false)
             }
         }
 
-        // Filter by trust level
-        if let trustFilter = trustFilter {
-            filtered = filtered.filter { $0.trustLevel == trustFilter }
+        if let trustFilter = inputs.trustFilter {
+            // Apply local trust filter, but exclude items the graph has
+            // already classified as benign — once the user/AI has verified
+            // an unsigned dylib is OK, it shouldn't keep appearing in the
+            // "Suspicious" red list.
+            filtered = filtered.filter { item in
+                guard item.trustLevel == trustFilter else { return false }
+                let fingerprint = ItemFingerprint.make(from: item).hash
+                let conceptIDs = ConceptIngestor.shared.conceptIDs(forFingerprint: fingerprint)
+                let resolved = ConceptResolver.shared.resolve(item: item, linkedConceptIDs: conceptIDs)
+                if case .classified(let verdict, _) = resolved.outcome, verdict == .benign {
+                    return false
+                }
+                if case .knownBenign(_, let conf) = RuleMatcher.shared.evaluate(item: item), conf >= 0.7 {
+                    return false
+                }
+                return true
+            }
         }
 
-        // Filter by enabled state
-        if showOnlyEnabled {
+        if inputs.showOnlyEnabled {
             filtered = filtered.filter { $0.isEnabled }
         }
 
-        // Sort
-        filtered = sortItems(filtered, by: sortOrder)
+        var hiddenCount = 0
+        if inputs.hideGraphTrusted {
+            filtered = filtered.filter { item in
+                let fingerprint = ItemFingerprint.make(from: item).hash
+                let conceptIDs = ConceptIngestor.shared.conceptIDs(forFingerprint: fingerprint)
+                let resolved = ConceptResolver.shared.resolve(item: item, linkedConceptIDs: conceptIDs)
+                if case .classified(let verdict, _) = resolved.outcome, verdict == .benign {
+                    hiddenCount += 1
+                    return false
+                }
+                if case .knownBenign(_, let conf) = RuleMatcher.shared.evaluate(item: item), conf >= 0.7 {
+                    hiddenCount += 1
+                    return false
+                }
+                return true
+            }
+        }
 
-        filteredItems = filtered
+        filtered = sortItems(filtered, by: inputs.sortOrder)
+
+        // Suspicious count over the FULL items list (not just filtered) and
+        // graph-aware: an unsigned item that the knowledge graph trusts as
+        // benign is excluded from the count.
+        let suspicious = inputs.items.reduce(into: 0) { acc, item in
+            guard item.trustLevel == .unsigned || item.trustLevel == .suspicious else { return }
+            let fingerprint = ItemFingerprint.make(from: item).hash
+            let conceptIDs = ConceptIngestor.shared.conceptIDs(forFingerprint: fingerprint)
+            let resolved = ConceptResolver.shared.resolve(item: item, linkedConceptIDs: conceptIDs)
+            if case .classified(let verdict, _) = resolved.outcome, verdict == .benign {
+                return
+            }
+            if case .knownBenign(_, let conf) = RuleMatcher.shared.evaluate(item: item), conf >= 0.7 {
+                return
+            }
+            acc += 1
+        }
+
+        return FilterResult(items: filtered, hiddenCount: hiddenCount, suspiciousCount: suspicious)
     }
 
-    private func sortItems(_ items: [PersistenceItem], by order: SortOrder) -> [PersistenceItem] {
+    /// Re-runs the filter pipeline through the off-main path, without waiting
+    /// for an @Published change. Call this after knowledge-graph mutations.
+    func refreshFilter() {
+        manualRefreshSubject.send(())
+    }
+
+    /// Items hidden by the knowledge-graph filter, populated by the filter
+    /// sink. Stored (not computed) so SwiftUI body recomputes don't trigger
+    /// re-iteration.
+    @Published private(set) var trustedHiddenCount: Int = 0
+
+    private nonisolated static func sortItems(_ items: [PersistenceItem], by order: SortOrder) -> [PersistenceItem] {
         switch order {
         case .riskScore:
             return items.sorted { ($0.riskScore ?? 0) > ($1.riskScore ?? 0) }
@@ -283,6 +462,18 @@ final class AppState: ObservableObject {
             try? "Cache saved OK!\n".appendToFile(debugFile)
         } catch {
             try? "Cache save FAILED: \(error)\n".appendToFile(debugFile)
+        }
+
+        // Concept extraction over the fresh scan. Off-main; refreshes the
+        // resolver caches when done so the filter starts hiding trusted items.
+        let scanned = items
+        Task.detached(priority: .userInitiated) { [weak self] in
+            let result = await ConceptIngestor.shared.ingest(items: scanned)
+            NSLog("[AppState] Concept ingest: %d items, %d associations, %d edges in %.2fs",
+                  result.itemsScanned, result.associations, result.edgesCreated, result.elapsed)
+            await MainActor.run {
+                self?.refreshFilter()
+            }
         }
 
         // Create automatic snapshot if first scan
@@ -342,10 +533,13 @@ final class AppState: ObservableObject {
         items.filter { $0.category == category }.count
     }
 
-    /// Get suspicious item count
-    var suspiciousCount: Int {
-        items.filter { $0.trustLevel == .unsigned || $0.trustLevel == .suspicious }.count
-    }
+    /// Number of items that are still suspicious *after* the knowledge graph
+    /// has had its say. An item with an "unsigned" trust level but a benign
+    /// graph verdict (e.g. a Homebrew dylib that AI/user has classified
+    /// trusted) is no longer counted as suspicious — the sidebar badge would
+    /// otherwise stay alarmingly high even after the graph has done its job.
+    /// Refreshed by the off-main filter pipeline.
+    @Published private(set) var suspiciousCount: Int = 0
 
     /// Get total item count
     var totalCount: Int {

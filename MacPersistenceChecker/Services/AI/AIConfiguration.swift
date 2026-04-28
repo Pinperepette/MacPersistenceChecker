@@ -94,6 +94,59 @@ final class AIConfiguration: ObservableObject {
         didSet { saveSettings() }
     }
 
+    /// Lightweight model for on-demand item analysis (cheaper, used by ItemAnalyst).
+    @Published var haikuModel: String {
+        didSet { saveSettings() }
+    }
+
+    /// Heavyweight model for narrative system reports — better at long-form
+    /// synthesis than Haiku. Used by HealthReportGenerator. Costs ~$3/MTok
+    /// input vs Haiku's ~$1, so reserved for high-value one-shot reports.
+    @Published var sonnetModel: String {
+        didSet { saveSettings() }
+    }
+
+    // MARK: - On-demand AI cap
+
+    /// Maximum AI calls allowed per day (hard cap to bound cost).
+    @Published var dailyCallCap: Int {
+        didSet { saveSettings() }
+    }
+
+    /// AI calls already made today. Auto-resets when the date rolls over.
+    @Published private(set) var callsTodayCount: Int
+
+    /// Date stamp of the current counter window (start of day).
+    private var callsCounterDate: Date
+
+    /// True if the daily cap allows another call right now.
+    var canMakeCall: Bool {
+        rolloverIfNeeded()
+        return callsTodayCount < dailyCallCap
+    }
+
+    var callsRemainingToday: Int {
+        rolloverIfNeeded()
+        return max(0, dailyCallCap - callsTodayCount)
+    }
+
+    /// Records that a call was made. Persists immediately.
+    func recordCall() {
+        rolloverIfNeeded()
+        callsTodayCount += 1
+        saveSettings()
+    }
+
+    /// Rolls the counter over to a new day if the date has changed.
+    private func rolloverIfNeeded() {
+        let today = Calendar.current.startOfDay(for: Date())
+        if today != callsCounterDate {
+            callsCounterDate = today
+            callsTodayCount = 0
+            saveSettings()
+        }
+    }
+
     // MARK: - AI Analysis Settings
 
     /// AI check interval in seconds (used by monitoring when AI is enabled)
@@ -140,6 +193,11 @@ final class AIConfiguration: ObservableObject {
         self.useAI = false
         self.claudeAPIKey = ""
         self.claudeModel = "claude-sonnet-4-20250514"
+        self.haikuModel = "claude-haiku-4-5-20251001"
+        self.sonnetModel = "claude-sonnet-4-6"
+        self.dailyCallCap = 30
+        self.callsTodayCount = 0
+        self.callsCounterDate = Calendar.current.startOfDay(for: Date())
         self.aiCheckInterval = 300 // 5 minutes
         self.notificationThreshold = .medium
         self.promptOptions = AIPromptOptions()
@@ -173,6 +231,12 @@ final class AIConfiguration: ObservableObject {
         let customPrompt: String
         let mcpServerEnabled: Bool
         let mcpServerPath: String
+        // Phase 2 additions — optional for backwards compat with v2 saves
+        let haikuModel: String?
+        let dailyCallCap: Int?
+        let callsTodayCount: Int?
+        let callsCounterDate: TimeInterval?
+        let sonnetModel: String?
     }
 
     private func saveSettings() {
@@ -184,7 +248,12 @@ final class AIConfiguration: ObservableObject {
             promptOptions: promptOptions,
             customPrompt: customPrompt,
             mcpServerEnabled: mcpServerEnabled,
-            mcpServerPath: mcpServerPath
+            mcpServerPath: mcpServerPath,
+            haikuModel: haikuModel,
+            dailyCallCap: dailyCallCap,
+            callsTodayCount: callsTodayCount,
+            callsCounterDate: callsCounterDate.timeIntervalSince1970,
+            sonnetModel: sonnetModel
         )
 
         if let data = try? JSONEncoder().encode(settings) {
@@ -208,6 +277,13 @@ final class AIConfiguration: ObservableObject {
         self.customPrompt = settings.customPrompt
         self.mcpServerEnabled = settings.mcpServerEnabled
         self.mcpServerPath = settings.mcpServerPath
+        if let h = settings.haikuModel { self.haikuModel = h }
+        if let cap = settings.dailyCallCap { self.dailyCallCap = cap }
+        if let count = settings.callsTodayCount { self.callsTodayCount = count }
+        if let dateInterval = settings.callsCounterDate {
+            self.callsCounterDate = Date(timeIntervalSince1970: dateInterval)
+        }
+        if let s = settings.sonnetModel { self.sonnetModel = s }
     }
 
     // MARK: - Keychain
