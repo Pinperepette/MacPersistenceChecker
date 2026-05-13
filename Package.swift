@@ -24,6 +24,11 @@ let package = Package(
                 .process("Resources/ConceptHints.json"),
                 .copy("Resources/AIPrompts")
             ]
+        ),
+        .testTarget(
+            name: "MacPersistenceCheckerTests",
+            dependencies: ["MacPersistenceChecker"],
+            path: "Tests/MacPersistenceCheckerTests"
         )
     ]
 )

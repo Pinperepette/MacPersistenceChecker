@@ -16,6 +16,7 @@ struct MacPersistenceCheckerApp: App {
     @StateObject private var appState = AppState.shared
     @StateObject private var fdaChecker = FullDiskAccessChecker.shared
     @StateObject private var monitor = PersistenceMonitor.shared
+    @Environment(\.scenePhase) private var scenePhase
 
     init() {
         // Ensure database initialization runs (static property is lazy)
@@ -27,9 +28,15 @@ struct MacPersistenceCheckerApp: App {
     var body: some Scene {
         WindowGroup {
             Group {
-                if fdaChecker.hasFullDiskAccess || appState.skipFDACheck {
-                    ContentView()
-                        .environmentObject(appState)
+                if fdaChecker.hasFullDiskAccess || appState.skipFDACheckForCurrentSession {
+                    VStack(spacing: 0) {
+                        if appState.skipFDACheckForCurrentSession && !fdaChecker.hasFullDiskAccess {
+                            ReducedVisibilityBanner(appState: appState, fdaChecker: fdaChecker)
+                        }
+
+                        ContentView()
+                            .environmentObject(appState)
+                    }
                 } else {
                     PermissionGuideView()
                         .environmentObject(fdaChecker)
@@ -37,6 +44,11 @@ struct MacPersistenceCheckerApp: App {
                 }
             }
             .frame(minWidth: 1000, minHeight: 600)
+            .onChange(of: scenePhase) { phase in
+                if phase == .active {
+                    fdaChecker.refreshAccess(reason: .sceneBecameActive)
+                }
+            }
         }
         .windowStyle(.automatic)
         .commands {
@@ -183,6 +195,7 @@ struct SettingsView: View {
 }
 
 struct GeneralSettingsView: View {
+    @EnvironmentObject var appState: AppState
     @AppStorage("autoScanOnLaunch") private var autoScanOnLaunch = true
     @AppStorage("showNotifications") private var showNotifications = true
 
@@ -190,8 +203,67 @@ struct GeneralSettingsView: View {
         Form {
             Toggle("Scan automatically on launch", isOn: $autoScanOnLaunch)
             Toggle("Show notifications for new items", isOn: $showNotifications)
+
+            Section {
+                Button {
+                    FullDiskAccessChecker.shared.refreshAccess(reason: .manual)
+                } label: {
+                    Label("Check Full Disk Access Again", systemImage: "arrow.clockwise")
+                }
+
+                if appState.skipFDACheckForCurrentSession {
+                    Button {
+                        appState.skipFDACheckForCurrentSession = false
+                    } label: {
+                        Label("Show Full Disk Access Guide", systemImage: "shield")
+                    }
+                }
+            } header: {
+                Text("Full Disk Access")
+            } footer: {
+                Text("Run another permission check after changing Full Disk Access in System Settings.")
+            }
         }
         .padding()
+    }
+}
+
+private struct ReducedVisibilityBanner: View {
+    @ObservedObject var appState: AppState
+    @ObservedObject var fdaChecker: FullDiskAccessChecker
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .foregroundColor(.orange)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Running without Full Disk Access")
+                    .font(.subheadline)
+                    .fontWeight(.semibold)
+                Text("Some persistence locations may be hidden until permission is granted.")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+
+            Spacer()
+
+            Button {
+                fdaChecker.refreshAccess(reason: .manual)
+            } label: {
+                Label("Check Again", systemImage: "arrow.clockwise")
+            }
+
+            Button {
+                appState.skipFDACheckForCurrentSession = false
+            } label: {
+                Label("Show Guide", systemImage: "shield")
+            }
+            .buttonStyle(.borderedProminent)
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
+        .background(Color.orange.opacity(0.12))
     }
 }
 

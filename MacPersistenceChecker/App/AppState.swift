@@ -77,8 +77,8 @@ final class AppState: ObservableObject {
     /// Whether to show snapshots sheet
     @Published var showSnapshotsSheet: Bool = false
 
-    /// Whether to skip FDA check (persisted - survives app restarts)
-    @AppStorage("skipFDACheck") var skipFDACheck: Bool = false
+    /// Whether to skip FDA check for the current app session only.
+    @Published var skipFDACheckForCurrentSession: Bool = false
 
     /// Sidebar collapsed state
     @Published var sidebarCollapsed: Bool = false
@@ -130,22 +130,44 @@ final class AppState: ObservableObject {
     private let scanner = ScannerOrchestrator()
     private var cancellables = Set<AnyCancellable>()
 
-    private init() {
+    static let legacySkipFDACheckKey = "skipFDACheck"
+
+    init(
+        defaults: UserDefaults = .standard,
+        initializeDatabase: Bool = true,
+        setupBindings: Bool = true,
+        startBackgroundLoading: Bool = true,
+        preloadCaches: Bool = true
+    ) {
+        Self.clearLegacySkipFDACheck(defaults: defaults)
+
         // Ensure database is initialized before we try to load from it
-        ensureDatabaseInitialized()
-        setupBindings()
+        if initializeDatabase {
+            ensureDatabaseInitialized()
+        }
+        if setupBindings {
+            self.setupBindings()
+        }
         // Heavy DB reads (snapshots, cached scan with 6800+ JSON-decoded items)
         // run off the main thread so the UI can show the chrome immediately.
         // The @Published assignments hop back to main when the data is ready.
-        Task.detached(priority: .userInitiated) { [weak self] in
-            await self?.loadSnapshotsAsync()
-            await self?.loadCachedScanAsync()
+        if startBackgroundLoading {
+            Task.detached(priority: .userInitiated) { [weak self] in
+                await self?.loadSnapshotsAsync()
+                await self?.loadCachedScanAsync()
+            }
         }
         // Pre-warm the knowledge-graph rule cache + concept cache off the main
         // thread so the first filter / eye-toggle never blocks on SQLite.
-        RuleMatcher.shared.preload()
-        ConceptStore.shared.preload()
+        if preloadCaches {
+            RuleMatcher.shared.preload()
+            ConceptStore.shared.preload()
+        }
         // Note: Containment and Monitor are initialized lazily to avoid permission prompts on launch
+    }
+
+    static func clearLegacySkipFDACheck(defaults: UserDefaults = .standard) {
+        defaults.removeObject(forKey: legacySkipFDACheckKey)
     }
 
     /// Ensure database is initialized (idempotent)

@@ -4,6 +4,7 @@ struct PermissionGuideView: View {
     @EnvironmentObject var fdaChecker: FullDiskAccessChecker
     @EnvironmentObject var appState: AppState
     @State private var currentStep = 0
+    @State private var signingStatusSummary = "Signing: checking..."
 
     var body: some View {
         VStack(spacing: 0) {
@@ -13,14 +14,16 @@ struct PermissionGuideView: View {
             Divider()
 
             // Content
-            contentView
+            ScrollView {
+                contentView
+            }
 
             Divider()
 
             // Footer
             footerView
         }
-        .frame(width: 600, height: 500)
+        .frame(width: 680, height: 640)
         .onAppear {
             // Auto-open System Settings immediately
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
@@ -31,6 +34,7 @@ struct PermissionGuideView: View {
             fdaChecker.startPolling {
                 // Permission granted, view will automatically dismiss
             }
+            loadSigningStatus()
         }
         .onDisappear {
             fdaChecker.stopPolling()
@@ -100,10 +104,10 @@ struct PermissionGuideView: View {
             }
             .padding(.horizontal)
 
-            Spacer()
-
             // Status indicator
             statusView
+
+            diagnosticDisclosure
         }
         .padding()
     }
@@ -136,12 +140,53 @@ struct PermissionGuideView: View {
         .cornerRadius(8)
     }
 
+    private var diagnosticDisclosure: some View {
+        DisclosureGroup {
+            VStack(alignment: .leading, spacing: 8) {
+                Text(signingStatusSummary)
+                    .font(.system(.caption, design: .monospaced))
+                    .textSelection(.enabled)
+
+                if let snapshot = fdaChecker.lastSnapshot {
+                    Text("Last refresh: \(snapshot.reason.rawValue), granted: \(snapshot.isGranted ? "yes" : "no")")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+
+                    ForEach(snapshot.results, id: \.probeID) { result in
+                        Text(result.diagnosticSummary)
+                            .font(.system(.caption, design: .monospaced))
+                            .textSelection(.enabled)
+                    }
+                } else {
+                    Text("No FDA probe snapshot has been recorded yet.")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+
+                if !fdaChecker.hasFullDiskAccess {
+                    Label("Restart may be required by macOS after changing this permission.", systemImage: "arrow.clockwise")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+            }
+            .padding(.top, 8)
+        } label: {
+            Text("Diagnostic Details")
+                .font(.callout)
+                .fontWeight(.medium)
+        }
+        .padding()
+        .background(Color.secondary.opacity(0.08))
+        .cornerRadius(8)
+    }
+
     // MARK: - Footer
 
     private var footerView: some View {
         HStack {
-            Button("Skip for now") {
-                appState.skipFDACheck = true
+            Button("Continue without Full Disk Access") {
+                fdaChecker.stopPolling()
+                appState.skipFDACheckForCurrentSession = true
             }
             .buttonStyle(.plain)
             .foregroundColor(.secondary)
@@ -157,6 +202,17 @@ struct PermissionGuideView: View {
             .buttonStyle(.borderedProminent)
         }
         .padding()
+    }
+
+    private func loadSigningStatus() {
+        let bundlePath = Bundle.main.bundlePath
+
+        Task.detached {
+            let summary = AppSigningStatus.summary(for: bundlePath)
+            await MainActor.run {
+                signingStatusSummary = summary
+            }
+        }
     }
 }
 
@@ -193,6 +249,50 @@ struct StepView: View {
                     .foregroundColor(.secondary)
             }
         }
+    }
+}
+
+private enum AppSigningStatus {
+    static func summary(for bundlePath: String) -> String {
+        let process = Process()
+        let pipe = Pipe()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/codesign")
+        process.arguments = ["-dvvv", "-r-", bundlePath]
+        process.standardOutput = pipe
+        process.standardError = pipe
+
+        do {
+            try process.run()
+            process.waitUntilExit()
+        } catch {
+            return "Signing: unavailable (\(error.localizedDescription))"
+        }
+
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        let output = String(decoding: data, as: UTF8.self)
+
+        let signature = value(for: "Signature", in: output) ?? "unknown"
+        let teamIdentifier = value(for: "TeamIdentifier", in: output) ?? "unknown"
+        let requirement: String
+        if output.contains("designated => cdhash") {
+            requirement = "requirement=cdhash-only"
+        } else if output.contains("designated =>") {
+            requirement = "requirement=stable"
+        } else {
+            requirement = "requirement=unknown"
+        }
+
+        return "Signing: Signature=\(signature); TeamIdentifier=\(teamIdentifier); \(requirement)"
+    }
+
+    private static func value(for key: String, in output: String) -> String? {
+        guard let line = output
+            .split(separator: "\n")
+            .first(where: { $0.hasPrefix("\(key)=") }) else {
+            return nil
+        }
+
+        return String(line.dropFirst(key.count + 1))
     }
 }
 
