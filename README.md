@@ -600,6 +600,64 @@ cd MacPersistenceChecker
 
 Copy `MacPersistenceChecker.app` to `/Applications/`.
 
+### Signing and Full Disk Access
+
+`./build.sh` signs local builds ad-hoc by default. That is fine for smoke tests, but it is not a durable Full Disk Access identity: macOS TCC can treat a rebuilt ad-hoc binary as a different app because the signing requirement is tied to the build's hash.
+
+Use the build output, or run this directly, to inspect the app's current signing identity:
+
+```bash
+/usr/bin/codesign -dvvv -r- MacPersistenceChecker.app
+```
+
+If the designated requirement is `cdhash`-only or `TeamIdentifier=not set`, expect Full Disk Access grants to be build-specific. Use a stable signing identity before claiming FDA persists across rebuilds.
+
+For stable FDA/TCC validation, build with a stable signing identity:
+
+```bash
+/usr/bin/security find-identity -v -p codesigning
+SIGNING_IDENTITY="Developer ID Application: Example Corp (TEAMID)" REQUIRE_STABLE_SIGNING=1 ./build.sh
+```
+
+Replace `Developer ID Application: Example Corp (TEAMID)` with the exact identity name printed by `security find-identity`.
+
+Run the read-only build diagnostics before granting or re-granting Full Disk Access:
+
+```bash
+scripts/verify-fda-build.sh MacPersistenceChecker.app
+```
+
+### Full Disk Access verification
+
+1. Build ad-hoc and observe the warning:
+   ```bash
+   ./build.sh
+   ```
+2. Build with a stable signing identity when validating FDA persistence across rebuilds:
+   ```bash
+   /usr/bin/security find-identity -v -p codesigning
+   SIGNING_IDENTITY="Developer ID Application: Example Corp (TEAMID)" REQUIRE_STABLE_SIGNING=1 ./build.sh
+   ```
+   Replace the example identity with the exact value from `security find-identity`.
+3. Inspect the designated requirement:
+   ```bash
+   /usr/bin/codesign -dvvv -r- MacPersistenceChecker.app
+   ```
+4. Install the built app:
+   ```bash
+   cp -R MacPersistenceChecker.app /Applications/
+   ```
+5. Open `/Applications/MacPersistenceChecker.app` and grant Full Disk Access in System Settings.
+6. If macOS shows **Quit & Reopen**, use it. The app may detect a successful probe before relaunch, but scanner validation should use the relaunched process.
+7. Confirm the app reports Full Disk Access granted and shows the successful diagnostic probe.
+8. Rebuild with the same stable identity and confirm FDA still resolves without re-granting.
+
+For test-account cleanup only, you can reset this app's Full Disk Access decision:
+
+```bash
+tccutil reset SystemPolicyAllFiles com.pinperepette.MacPersistenceChecker
+```
+
 ### Requirements
 - macOS 13.0+
 - Xcode 15+ or Swift 5.9+
